@@ -26,6 +26,12 @@ import {
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import {
+  MODULE_ASSET_BUCKET,
+  MODULE_LIBRARY_ID,
+  isSupabaseConfigured,
+  supabase
+} from "./supabaseClient.js";
 
 const GRID_SIZE = 2;
 
@@ -285,6 +291,72 @@ function loadUploadedAsset(assetKey) {
 
 function clearUploadedAssets() {
   return withModuleStore("readwrite", (store) => store.clear());
+}
+
+function getSupabaseAssetUrl(path) {
+  if (!supabase || !path) return null;
+  return supabase.storage.from(MODULE_ASSET_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+function getSafeAssetName(name) {
+  return name
+    .trim()
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+async function uploadSupabaseModuleAsset(moduleId, file) {
+  if (!supabase) return null;
+  const path = `${moduleId}/${Date.now()}-${getSafeAssetName(file.name || "module.glb")}`;
+  const { error } = await supabase.storage
+    .from(MODULE_ASSET_BUCKET)
+    .upload(path, file, {
+      cacheControl: "3600",
+      contentType: file.type || "model/gltf-binary",
+      upsert: true
+    });
+  if (error) throw error;
+  return { path, url: getSupabaseAssetUrl(path) };
+}
+
+async function loadSupabaseModuleLibrary() {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("module_libraries")
+    .select("modules")
+    .eq("id", MODULE_LIBRARY_ID)
+    .maybeSingle();
+  if (error) throw error;
+  if (!Array.isArray(data?.modules) || data.modules.length === 0) return null;
+  return data.modules.map((module) => {
+    if (module.assetPath && !module.url) {
+      return { ...module, url: getSupabaseAssetUrl(module.assetPath) };
+    }
+    return module;
+  });
+}
+
+async function saveSupabaseModuleLibrary(modules) {
+  if (!supabase) return;
+  const cloudModules = modules.map((module) => {
+    const snapshot = serializeModulesForStorage([module])[0];
+    if (snapshot.url?.startsWith("blob:")) {
+      delete snapshot.url;
+    }
+    return snapshot;
+  });
+  const { error } = await supabase
+    .from("module_libraries")
+    .upsert(
+      {
+        id: MODULE_LIBRARY_ID,
+        modules: cloudModules,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "id" }
+    );
+  if (error) throw error;
 }
 
 function downloadBlob(filename, blob) {
@@ -1265,6 +1337,31 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!isSupabaseConfigured) return undefined;
+
+    async function hydrateCloudModules() {
+      const cloudModules = await loadSupabaseModuleLibrary();
+      if (cancelled || !cloudModules) return;
+      setModules(cloudModules);
+      setSelectedModule((current) =>
+        cloudModules.some((module) => module.id === current) ? current : cloudModules[0].id
+      );
+      setEditingModule((current) =>
+        cloudModules.some((module) => module.id === current) ? current : cloudModules[0].id
+      );
+      window.localStorage.setItem(MODULE_STORAGE_KEY, JSON.stringify(serializeModulesForStorage(cloudModules)));
+      setSaveStatus("Cloud loaded");
+    }
+
+    hydrateCloudModules().catch(() => setSaveStatus("Cloud load failed"));
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
 
     async function hydrateUploadedModules() {
       const uploadedModules = modules.filter(
@@ -1274,6 +1371,9 @@ export default function App() {
 
       const hydrated = await Promise.all(
         uploadedModules.map(async (module) => {
+          if (module.assetPath) {
+            return { id: module.id, url: getSupabaseAssetUrl(module.assetPath) };
+          }
           const blob = await loadUploadedAsset(module.assetKey);
           return blob ? { id: module.id, url: URL.createObjectURL(blob) } : null;
         })
@@ -3803,14 +3903,16 @@ export default function App() {
           .map(async (file) => {
         const id = `uploaded-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         await saveUploadedAsset(id, file);
+        const cloudAsset = isSupabaseConfigured ? await uploadSupabaseModuleAsset(id, file) : null;
         return {
           id,
           assetKey: id,
+          assetPath: cloudAsset?.path ?? null,
           name: stripModelExtension(file.name),
           footprint: [1, 1],
           height: 1,
           color: "#6d8790",
-          url: URL.createObjectURL(file),
+          url: cloudAsset?.url ?? URL.createObjectURL(file),
           scale: 1,
           rotation: [0, 0, 0],
           source: "upload"
@@ -3849,10 +3951,13 @@ export default function App() {
     setEditingModule((current) => (current === moduleId ? nextModules[0].id : current));
   }
 
-  function saveModules() {
+  async function saveModules() {
     try {
+      if (isSupabaseConfigured) {
+        await saveSupabaseModuleLibrary(modules);
+      }
       window.localStorage.setItem(MODULE_STORAGE_KEY, JSON.stringify(serializeModulesForStorage(modules)));
-      setSaveStatus("Saved");
+      setSaveStatus(isSupabaseConfigured ? "Saved to cloud" : "Saved");
     } catch {
       setSaveStatus("Save failed");
     }
@@ -3906,8 +4011,18 @@ export default function App() {
             const assetKey = restored.assetKey || restored.id;
             const blob = dataUrlToBlob(restored.assetDataUrl);
             await saveUploadedAsset(assetKey, blob);
+            if (isSupabaseConfigured) {
+              const fileName = restored.assetName || `${restored.name || restored.id}.glb`;
+              const file = new File([blob], fileName, { type: restored.assetType || blob.type || "model/gltf-binary" });
+              const cloudAsset = await uploadSupabaseModuleAsset(restored.id, file);
+              restored.assetPath = cloudAsset?.path ?? restored.assetPath;
+              restored.url = cloudAsset?.url ?? URL.createObjectURL(blob);
+            } else {
+              restored.url = URL.createObjectURL(blob);
+            }
             restored.assetKey = assetKey;
-            restored.url = URL.createObjectURL(blob);
+          } else if (restored.assetPath && !restored.url) {
+            restored.url = getSupabaseAssetUrl(restored.assetPath);
           }
           delete restored.assetDataUrl;
           delete restored.assetName;
@@ -3919,8 +4034,11 @@ export default function App() {
       setModules(restoredModules);
       setSelectedModule(restoredModules[0].id);
       setEditingModule(restoredModules[0].id);
+      if (isSupabaseConfigured) {
+        await saveSupabaseModuleLibrary(restoredModules);
+      }
       window.localStorage.setItem(MODULE_STORAGE_KEY, JSON.stringify(serializeModulesForStorage(restoredModules)));
-      setSaveStatus("Library imported");
+      setSaveStatus(isSupabaseConfigured ? "Library imported to cloud" : "Library imported");
     } catch {
       setSaveStatus("Import failed");
     } finally {
@@ -4239,8 +4357,8 @@ export default function App() {
             </button>
 
             <div className="save-strip">
-              <span>{saveStatus}</span>
-              <button type="button" onClick={saveModules}>Save Edits</button>
+              <span>{saveStatus}{isSupabaseConfigured ? " · Shared cloud" : " · Local browser"}</span>
+              <button type="button" onClick={() => void saveModules()}>Save Edits</button>
               <button type="button" onClick={() => void exportModuleLibrary()}>Export Library</button>
               <button type="button" onClick={() => moduleLibraryInputRef.current?.click()}>Import Library</button>
               <button type="button" onClick={resetSavedModules}>Reset</button>
