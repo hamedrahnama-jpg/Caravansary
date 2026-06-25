@@ -2,6 +2,7 @@ node_modules
 dist
 .agents/
 .codex/
+.vercel/
 .env
 .env.local
 *.log
