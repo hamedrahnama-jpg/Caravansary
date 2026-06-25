@@ -287,6 +287,35 @@ function clearUploadedAssets() {
   return withModuleStore("readwrite", (store) => store.clear());
 }
 
+function downloadBlob(filename, blob) {
+  const link = document.createElement("a");
+  link.download = filename;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, data] = dataUrl.split(",");
+  const mimeMatch = header.match(/data:(.*?);base64/);
+  const mimeType = mimeMatch?.[1] || "model/gltf-binary";
+  const binary = window.atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
 function rangesOverlap(aMin, aMax, bMin, bMax, tolerance = EDGE_SNAP_DISTANCE) {
   return aMin <= bMax + tolerance && aMax >= bMin - tolerance;
 }
@@ -1143,6 +1172,7 @@ export default function App() {
   });
   const sectionDragRef = useRef(null);
   const fileInputRef = useRef(null);
+  const moduleLibraryInputRef = useRef(null);
   const openDesignInputRef = useRef(null);
   const importDesignInputRef = useRef(null);
   const undoStackRef = useRef([]);
@@ -2973,14 +3003,6 @@ export default function App() {
       renderer.render(scene, controls.object);
     }
 
-    function downloadBlob(filename, blob) {
-      const link = document.createElement("a");
-      link.download = filename;
-      link.href = URL.createObjectURL(blob);
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-    }
-
     function bytesFromAscii(text) {
       const bytes = new Uint8Array(text.length);
       for (let index = 0; index < text.length; index += 1) {
@@ -3836,6 +3858,78 @@ export default function App() {
     }
   }
 
+  async function exportModuleLibrary() {
+    try {
+      const exportedModules = await Promise.all(
+        modules.map(async (module) => {
+          const snapshot = serializeModulesForStorage([module])[0];
+          if (module.source === "upload" && module.assetKey) {
+            const asset = await loadUploadedAsset(module.assetKey);
+            if (asset) {
+              snapshot.assetDataUrl = await blobToDataUrl(asset);
+              snapshot.assetName = asset.name ?? `${module.name}.glb`;
+              snapshot.assetType = asset.type || "model/gltf-binary";
+            }
+          }
+          return snapshot;
+        })
+      );
+      const library = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        modules: exportedModules
+      };
+      downloadBlob(
+        `caravansary-module-library-${new Date().toISOString().slice(0, 10)}.json`,
+        new Blob([JSON.stringify(library, null, 2)], { type: "application/json" })
+      );
+      setSaveStatus("Library exported");
+    } catch {
+      setSaveStatus("Export failed");
+    }
+  }
+
+  async function importModuleLibrary(file) {
+    if (!file) return;
+    try {
+      const library = await readJsonFile(file);
+      const importedModules = Array.isArray(library) ? library : library.modules;
+      if (!Array.isArray(importedModules) || importedModules.length === 0) {
+        setSaveStatus("Import failed");
+        return;
+      }
+
+      const restoredModules = await Promise.all(
+        importedModules.map(async (module) => {
+          const restored = { ...module };
+          if (restored.source === "upload" && restored.assetDataUrl) {
+            const assetKey = restored.assetKey || restored.id;
+            const blob = dataUrlToBlob(restored.assetDataUrl);
+            await saveUploadedAsset(assetKey, blob);
+            restored.assetKey = assetKey;
+            restored.url = URL.createObjectURL(blob);
+          }
+          delete restored.assetDataUrl;
+          delete restored.assetName;
+          delete restored.assetType;
+          return restored;
+        })
+      );
+
+      setModules(restoredModules);
+      setSelectedModule(restoredModules[0].id);
+      setEditingModule(restoredModules[0].id);
+      window.localStorage.setItem(MODULE_STORAGE_KEY, JSON.stringify(serializeModulesForStorage(restoredModules)));
+      setSaveStatus("Library imported");
+    } catch {
+      setSaveStatus("Import failed");
+    } finally {
+      if (moduleLibraryInputRef.current) {
+        moduleLibraryInputRef.current.value = "";
+      }
+    }
+  }
+
   function resetSavedModules() {
     window.localStorage.removeItem(MODULE_STORAGE_KEY);
     clearUploadedAssets().catch(() => {});
@@ -4132,6 +4226,13 @@ export default function App() {
               multiple
               onChange={(event) => void addUploadedModules(event.target.files)}
             />
+            <input
+              ref={moduleLibraryInputRef}
+              className="hidden-file"
+              type="file"
+              accept=".json,application/json"
+              onChange={(event) => void importModuleLibrary(event.target.files?.[0])}
+            />
             <button type="button" className="upload-button" onClick={() => fileInputRef.current?.click()}>
               <Upload size={17} aria-hidden="true" />
               Upload GLB
@@ -4140,6 +4241,8 @@ export default function App() {
             <div className="save-strip">
               <span>{saveStatus}</span>
               <button type="button" onClick={saveModules}>Save Edits</button>
+              <button type="button" onClick={() => void exportModuleLibrary()}>Export Library</button>
+              <button type="button" onClick={() => moduleLibraryInputRef.current?.click()}>Import Library</button>
               <button type="button" onClick={resetSavedModules}>Reset</button>
             </div>
 

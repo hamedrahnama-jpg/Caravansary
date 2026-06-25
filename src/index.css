@@ -169,7 +169,7 @@ h1 {
 
 .save-strip {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) repeat(2, auto);
   gap: 8px;
   align-items: center;
   padding: 8px;
@@ -179,6 +179,7 @@ h1 {
 }
 
 .save-strip span {
+  grid-column: 1 / -1;
   min-width: 0;
   overflow: hidden;
   color: #55656a;
