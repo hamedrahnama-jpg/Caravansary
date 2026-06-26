@@ -1354,6 +1354,43 @@ function createStageDirectionMarkers() {
   return group;
 }
 
+function createSelectionBoxHelper(color = "#f2c94c") {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(new Array(72).fill(0), 3));
+  const material = new THREE.LineBasicMaterial({ color, depthTest: false });
+  const helper = new THREE.LineSegments(geometry, material);
+  helper.renderOrder = 20;
+  helper.frustumCulled = false;
+  return helper;
+}
+
+function updateSelectionBoxHelper(helper, object) {
+  const box = getObjectBox(object);
+  const min = box.min;
+  const max = box.max;
+  const corners = [
+    [min.x, min.y, min.z],
+    [max.x, min.y, min.z],
+    [max.x, min.y, max.z],
+    [min.x, min.y, max.z],
+    [min.x, max.y, min.z],
+    [max.x, max.y, min.z],
+    [max.x, max.y, max.z],
+    [min.x, max.y, max.z]
+  ];
+  const edges = [
+    0, 1, 1, 2, 2, 3, 3, 0,
+    4, 5, 5, 6, 6, 7, 7, 4,
+    0, 4, 1, 5, 2, 6, 3, 7
+  ];
+  const positions = helper.geometry.attributes.position;
+  edges.forEach((cornerIndex, index) => {
+    positions.setXYZ(index, ...corners[cornerIndex]);
+  });
+  positions.needsUpdate = true;
+  helper.geometry.computeBoundingSphere();
+}
+
 export default function App() {
   const canvasRef = useRef(null);
   const previewCanvasRef = useRef(null);
@@ -2018,7 +2055,10 @@ export default function App() {
     if (modelGroupRef.current) {
       modelGroupRef.current.rotation.y = THREE.MathUtils.degToRad(rotation);
       modelGroupRef.current.scale.setScalar(modelScale);
-      selectionHelpersRef.current.forEach((helper) => helper.update());
+      selectionHelpersRef.current.forEach((helper, itemId) => {
+        const item = placedRef.current.find((placedItem) => placedItem.id === itemId);
+        if (item) updateSelectionBoxHelper(helper, item.mesh);
+      });
       requestSceneRender();
       requestSectionViewportRender();
     }
@@ -4198,14 +4238,11 @@ export default function App() {
       if (!item) return;
       let helper = selectionHelpersRef.current.get(itemId);
       if (!helper) {
-        helper = new THREE.BoxHelper(item.mesh, "#f2c94c");
-        helper.material.depthTest = false;
-        helper.renderOrder = 20;
+        helper = createSelectionBoxHelper();
         scene.add(helper);
         selectionHelpersRef.current.set(itemId, helper);
       }
-      helper.object = item.mesh;
-      helper.update();
+      updateSelectionBoxHelper(helper, item.mesh);
       helper.visible = true;
     });
     requestSceneRender();
