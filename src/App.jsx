@@ -517,6 +517,31 @@ function getObjectBox(object) {
   return new THREE.Box3().setFromObject(object);
 }
 
+function hasPlacedModuleAncestor(object) {
+  let current = object;
+  while (current) {
+    if (current.userData?.itemId) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function isGeneratedShadowHelper(object) {
+  return Boolean(
+    object.userData?.isExportEdge ||
+      object.userData?.isSectionCap ||
+      object.userData?.isStageMap ||
+      object.userData?.isFloor ||
+      object.userData?.isExportGroundBackdrop ||
+      object.userData?.isSectionBackdrop ||
+      object.userData?.isStageMarker
+  );
+}
+
+function isRealModuleShadowCaster(object) {
+  return Boolean(object.isMesh && object.visible && !isGeneratedShadowHelper(object) && hasPlacedModuleAncestor(object));
+}
+
 function applyExactDimensions(group, dimensions) {
   group.updateWorldMatrix(true, true);
   const size = new THREE.Box3().setFromObject(group).getSize(new THREE.Vector3());
@@ -2238,9 +2263,9 @@ export default function App() {
     }
     if (modelGroup) {
       modelGroup.traverse((object) => {
-        if (!object.isMesh || object.userData?.isExportEdge || object.userData?.isSectionCap) return;
-        object.castShadow = anyShadowsActive;
-        object.receiveShadow = objectShadowsActive;
+        if (!object.isMesh) return;
+        object.castShadow = isRealModuleShadowCaster(object) && anyShadowsActive;
+        object.receiveShadow = isRealModuleShadowCaster(object) && objectShadowsActive;
       });
     }
     requestSceneRender();
@@ -3458,11 +3483,11 @@ export default function App() {
             object.userData?.isStageMap ||
             object.userData?.isExportGroundBackdrop ||
             object.userData?.isSectionBackdrop;
-          object.castShadow =
-            !isGroundReceiver && (exportAnyShadowsActive || force);
+          const isModuleShadowCaster = isRealModuleShadowCaster(object);
+          object.castShadow = isModuleShadowCaster && (exportAnyShadowsActive || force);
           object.receiveShadow = isGroundReceiver
             ? exportGroundShadowsActive || force
-            : exportObjectShadowsActive || force;
+            : isModuleShadowCaster && (exportObjectShadowsActive || force);
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
@@ -3542,8 +3567,9 @@ export default function App() {
       floor.receiveShadow = exportGroundShadowsActive;
       modelGroup.traverse((object) => {
         if (object.isMesh) {
-          object.castShadow = object !== floor && exportAnyShadowsActive;
-          object.receiveShadow = exportObjectShadowsActive;
+          const isModuleShadowCaster = isRealModuleShadowCaster(object);
+          object.castShadow = isModuleShadowCaster && exportAnyShadowsActive;
+          object.receiveShadow = isModuleShadowCaster && exportObjectShadowsActive;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
