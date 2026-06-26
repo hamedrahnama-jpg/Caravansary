@@ -3295,6 +3295,13 @@ export default function App() {
     const currentClearAlpha = renderer.getClearAlpha();
     const currentPixelRatio = renderer.getPixelRatio();
     const currentSize = renderer.getSize(new THREE.Vector2());
+    const ambient = ambientLightRef.current;
+    const sun = sunLightRef.current;
+    const currentAmbientIntensity = ambient?.intensity ?? null;
+    const currentAmbientGroundColor = ambient?.groundColor ? ambient.groundColor.clone() : null;
+    const currentSunIntensity = sun?.intensity ?? null;
+    const currentSunPosition = sun?.position ? sun.position.clone() : null;
+    const currentSunTargetPosition = sun?.target?.position ? sun.target.position.clone() : null;
     const activeCamera = controls.object;
     const currentCameraFov = activeCamera.isPerspectiveCamera ? activeCamera.fov : null;
     const currentCameraAspect = activeCamera.isPerspectiveCamera ? activeCamera.aspect : null;
@@ -3370,9 +3377,47 @@ export default function App() {
       }
     }
 
+    function fitExportShadowCamera(style) {
+      const exportSun = sunLightRef.current;
+      if (!exportSun?.shadow) return;
+      const bounds = new THREE.Box3().setFromObject(modelGroup);
+      if (bounds.isEmpty()) return;
+
+      const center = bounds.getCenter(new THREE.Vector3());
+      const size = bounds.getSize(new THREE.Vector3());
+      const radius = Math.max(size.x, size.y, size.z, 12) * 0.82;
+      const sunDirection = getSunPositionFromEastWest(sunEastWest).normalize();
+      exportSun.target.position.copy(center);
+      exportSun.target.updateMatrixWorld();
+      exportSun.position.copy(center).add(sunDirection.multiplyScalar(Math.max(radius * 3.5, 45)));
+      exportSun.shadow.camera.left = -radius;
+      exportSun.shadow.camera.right = radius;
+      exportSun.shadow.camera.top = radius;
+      exportSun.shadow.camera.bottom = -radius;
+      exportSun.shadow.camera.near = 0.5;
+      exportSun.shadow.camera.far = Math.max(radius * 7, 120);
+      exportSun.shadow.camera.updateProjectionMatrix();
+      if (style.mode === "realistic") {
+        exportSun.intensity = 5.4;
+      }
+      exportSun.shadow.needsUpdate = true;
+    }
+
+    function applyExportLighting(style) {
+      if (ambient && style.mode === "realistic") {
+        ambient.intensity = 0.55;
+        ambient.groundColor.set("#6f6252");
+      }
+      if (sun) {
+        sun.intensity = style.mode === "realistic" ? 5.4 : 3.2;
+      }
+      fitExportShadowCamera(style);
+    }
+
     function prepareExportShadows(force = false) {
       const shouldRenderShadows = exportShadows || exportObjectShadows || liveShadowPreview || force;
       if (!shouldRenderShadows) return;
+      applyExportLighting(selectedExportRenderStyle);
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.shadowMap.needsUpdate = true;
@@ -3568,6 +3613,20 @@ export default function App() {
       });
       if (walkMode) {
         applyWalkExportLighting();
+      } else {
+        if (ambient && currentAmbientIntensity !== null) {
+          ambient.intensity = currentAmbientIntensity;
+          if (currentAmbientGroundColor) ambient.groundColor.copy(currentAmbientGroundColor);
+        }
+        if (sun && currentSunIntensity !== null) {
+          sun.intensity = currentSunIntensity;
+          if (currentSunPosition) sun.position.copy(currentSunPosition);
+          if (currentSunTargetPosition) {
+            sun.target.position.copy(currentSunTargetPosition);
+            sun.target.updateMatrixWorld();
+          }
+          sun.shadow.needsUpdate = true;
+        }
       }
       renderer.render(scene, controls.object);
     }
