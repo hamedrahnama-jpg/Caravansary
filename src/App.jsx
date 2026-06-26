@@ -3314,7 +3314,6 @@ export default function App() {
     const exportSuffix = `${exportScale.toFixed(2).replace(/\.?0+$/, "")}x`;
     const hiddenHelpers = [];
     const shadowSettings = [];
-    const temporaryGroundShadows = [];
     let temporaryFloorMaterial = null;
     let exportShadowQualityApplied = false;
 
@@ -3378,7 +3377,7 @@ export default function App() {
       }
     }
 
-    function fitExportShadowCamera(style) {
+    function fitExportShadowCamera() {
       const exportSun = sunLightRef.current;
       if (!exportSun?.shadow) return;
       const bounds = new THREE.Box3().setFromObject(modelGroup);
@@ -3386,7 +3385,7 @@ export default function App() {
 
       const center = bounds.getCenter(new THREE.Vector3());
       const size = bounds.getSize(new THREE.Vector3());
-      const radius = Math.max(size.x, size.y, size.z, 12) * 0.72;
+      const radius = Math.max(size.x, size.y, size.z, 12) * 0.9;
       const sunDirection = getSunPositionFromEastWest(sunEastWest).normalize();
       exportSun.target.position.copy(center);
       exportSun.target.updateMatrixWorld();
@@ -3398,85 +3397,13 @@ export default function App() {
       exportSun.shadow.camera.near = 0.5;
       exportSun.shadow.camera.far = Math.max(radius * 7, 120);
       exportSun.shadow.camera.updateProjectionMatrix();
-      if (style.mode === "realistic") {
-        exportSun.intensity = 7.2;
-      }
       exportSun.shadow.needsUpdate = true;
-    }
-
-    function applyExportLighting(style) {
-      if (ambient && style.mode === "realistic") {
-        ambient.intensity = 0.24;
-        ambient.groundColor.set("#3b3329");
-      }
-      if (sun) {
-        sun.intensity = style.mode === "realistic" ? 7.2 : 3.2;
-      }
-      fitExportShadowCamera(style);
-    }
-
-    function createSoftShadowTexture() {
-      const canvas = document.createElement("canvas");
-      canvas.width = 256;
-      canvas.height = 256;
-      const context = canvas.getContext("2d");
-      const gradient = context.createRadialGradient(128, 128, 12, 128, 128, 118);
-      gradient.addColorStop(0, "rgba(0, 0, 0, 0.92)");
-      gradient.addColorStop(0.46, "rgba(0, 0, 0, 0.62)");
-      gradient.addColorStop(0.78, "rgba(0, 0, 0, 0.20)");
-      gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
-      context.fillStyle = gradient;
-      context.fillRect(0, 0, 256, 256);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.needsUpdate = true;
-      return texture;
-    }
-
-    function addExportGroundShadowProjection(style) {
-      const shouldRenderShadows = exportShadows || liveShadowPreview;
-      if (!shouldRenderShadows || style.mode !== "realistic" || temporaryGroundShadows.length > 0) return;
-
-      const shadowTexture = createSoftShadowTexture();
-      const sunVector = getSunPositionFromEastWest(sunEastWest);
-      const horizontalSun = new THREE.Vector2(sunVector.x, sunVector.z);
-      if (horizontalSun.lengthSq() < 0.001) horizontalSun.set(1, 0);
-      horizontalSun.normalize();
-
-      placedRef.current.forEach((item) => {
-        const box = getObjectBox(item.mesh);
-        if (box.isEmpty()) return;
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-        const shadowLength = Math.max(0.9, size.y * 1.25);
-        const shadowWidth = Math.max(size.x, size.z) * 1.35;
-        const shadowDepth = Math.max(size.x, size.z) * 0.72 + shadowLength;
-        const offset = horizontalSun.clone().multiplyScalar(-shadowLength * 0.42);
-        const material = new THREE.MeshBasicMaterial({
-          map: shadowTexture,
-          color: "#130c04",
-          transparent: true,
-          opacity: 0.68,
-          depthTest: true,
-          depthWrite: false,
-          side: THREE.DoubleSide
-        });
-        const shadow = new THREE.Mesh(new THREE.PlaneGeometry(shadowWidth, shadowDepth), material);
-        shadow.rotation.x = -Math.PI / 2;
-        shadow.rotation.z = Math.atan2(horizontalSun.y, horizontalSun.x) + Math.PI / 2;
-        shadow.position.set(center.x + offset.x, 0.055, center.z + offset.y);
-        shadow.renderOrder = 3;
-        shadow.userData.isExportGroundShadow = true;
-        scene.add(shadow);
-        temporaryGroundShadows.push(shadow);
-      });
     }
 
     function prepareExportShadows(force = false) {
       const shouldRenderShadows = exportShadows || exportObjectShadows || liveShadowPreview || force;
       if (!shouldRenderShadows) return;
-      applyExportLighting(selectedExportRenderStyle);
-      addExportGroundShadowProjection(selectedExportRenderStyle);
+      fitExportShadowCamera();
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.shadowMap.needsUpdate = true;
@@ -3492,9 +3419,9 @@ export default function App() {
               radius: object.shadow.radius
             });
             object.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
-            object.shadow.bias = -0.00008;
-            object.shadow.normalBias = 0.008;
-            object.shadow.radius = selectedExportRenderStyle.mode === "realistic" ? 0.8 : 2.5;
+            object.shadow.bias = -0.0004;
+            object.shadow.normalBias = 0.03;
+            object.shadow.radius = 1;
           }
         });
         exportShadowQualityApplied = true;
@@ -3509,10 +3436,7 @@ export default function App() {
             !isGroundReceiver && (exportShadows || exportObjectShadows || liveShadowPreview || force);
           object.receiveShadow = isGroundReceiver
             ? exportShadows || liveShadowPreview || force
-            : exportObjectShadows ||
-              liveShadowPreview ||
-              force ||
-              (selectedExportRenderStyle.mode === "realistic" && exportShadows);
+            : exportObjectShadows || liveShadowPreview || force;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
@@ -3628,13 +3552,6 @@ export default function App() {
       floor.material.color.copy(currentFloorColor);
       floor.visible = currentFloorVisible;
       if (grid) grid.visible = currentGridVisible;
-      temporaryGroundShadows.forEach((shadow) => {
-        scene.remove(shadow);
-        shadow.geometry?.dispose();
-        shadow.material?.map?.dispose();
-        shadow.material?.dispose();
-      });
-      temporaryGroundShadows.length = 0;
       hiddenHelpers.forEach((helper) => {
         helper.visible = true;
       });
