@@ -3377,33 +3377,9 @@ export default function App() {
       }
     }
 
-    function fitExportShadowCamera() {
-      const exportSun = sunLightRef.current;
-      if (!exportSun?.shadow) return;
-      const bounds = new THREE.Box3().setFromObject(modelGroup);
-      if (bounds.isEmpty()) return;
-
-      const center = bounds.getCenter(new THREE.Vector3());
-      const size = bounds.getSize(new THREE.Vector3());
-      const radius = Math.max(size.x, size.y, size.z, 12) * 0.9;
-      const sunDirection = getSunPositionFromEastWest(sunEastWest).normalize();
-      exportSun.target.position.copy(center);
-      exportSun.target.updateMatrixWorld();
-      exportSun.position.copy(center).add(sunDirection.multiplyScalar(Math.max(radius * 3.5, 45)));
-      exportSun.shadow.camera.left = -radius;
-      exportSun.shadow.camera.right = radius;
-      exportSun.shadow.camera.top = radius;
-      exportSun.shadow.camera.bottom = -radius;
-      exportSun.shadow.camera.near = 0.5;
-      exportSun.shadow.camera.far = Math.max(radius * 7, 120);
-      exportSun.shadow.camera.updateProjectionMatrix();
-      exportSun.shadow.needsUpdate = true;
-    }
-
     function prepareExportShadows(force = false) {
       const shouldRenderShadows = exportShadows || exportObjectShadows || liveShadowPreview || force;
       if (!shouldRenderShadows) return;
-      fitExportShadowCamera();
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.shadowMap.needsUpdate = true;
