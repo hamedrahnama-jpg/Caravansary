@@ -3386,7 +3386,7 @@ export default function App() {
 
       const center = bounds.getCenter(new THREE.Vector3());
       const size = bounds.getSize(new THREE.Vector3());
-      const radius = Math.max(size.x, size.y, size.z, 12) * 0.82;
+      const radius = Math.max(size.x, size.y, size.z, 12) * 0.72;
       const sunDirection = getSunPositionFromEastWest(sunEastWest).normalize();
       exportSun.target.position.copy(center);
       exportSun.target.updateMatrixWorld();
@@ -3399,18 +3399,18 @@ export default function App() {
       exportSun.shadow.camera.far = Math.max(radius * 7, 120);
       exportSun.shadow.camera.updateProjectionMatrix();
       if (style.mode === "realistic") {
-        exportSun.intensity = 5.4;
+        exportSun.intensity = 7.2;
       }
       exportSun.shadow.needsUpdate = true;
     }
 
     function applyExportLighting(style) {
       if (ambient && style.mode === "realistic") {
-        ambient.intensity = 0.55;
-        ambient.groundColor.set("#6f6252");
+        ambient.intensity = 0.24;
+        ambient.groundColor.set("#3b3329");
       }
       if (sun) {
-        sun.intensity = style.mode === "realistic" ? 5.4 : 3.2;
+        sun.intensity = style.mode === "realistic" ? 7.2 : 3.2;
       }
       fitExportShadowCamera(style);
     }
@@ -3420,9 +3420,10 @@ export default function App() {
       canvas.width = 256;
       canvas.height = 256;
       const context = canvas.getContext("2d");
-      const gradient = context.createRadialGradient(128, 128, 20, 128, 128, 128);
-      gradient.addColorStop(0, "rgba(0, 0, 0, 0.58)");
-      gradient.addColorStop(0.58, "rgba(0, 0, 0, 0.26)");
+      const gradient = context.createRadialGradient(128, 128, 12, 128, 128, 118);
+      gradient.addColorStop(0, "rgba(0, 0, 0, 0.92)");
+      gradient.addColorStop(0.46, "rgba(0, 0, 0, 0.62)");
+      gradient.addColorStop(0.78, "rgba(0, 0, 0, 0.20)");
       gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
       context.fillStyle = gradient;
       context.fillRect(0, 0, 256, 256);
@@ -3453,9 +3454,9 @@ export default function App() {
         const offset = horizontalSun.clone().multiplyScalar(-shadowLength * 0.42);
         const material = new THREE.MeshBasicMaterial({
           map: shadowTexture,
-          color: "#24180b",
+          color: "#130c04",
           transparent: true,
-          opacity: 0.34,
+          opacity: 0.68,
           depthTest: true,
           depthWrite: false,
           side: THREE.DoubleSide
@@ -3491,9 +3492,9 @@ export default function App() {
               radius: object.shadow.radius
             });
             object.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
-            object.shadow.bias = -0.0002;
-            object.shadow.normalBias = 0.015;
-            object.shadow.radius = 2.5;
+            object.shadow.bias = -0.00008;
+            object.shadow.normalBias = 0.008;
+            object.shadow.radius = selectedExportRenderStyle.mode === "realistic" ? 0.8 : 2.5;
           }
         });
         exportShadowQualityApplied = true;
@@ -3508,7 +3509,10 @@ export default function App() {
             !isGroundReceiver && (exportShadows || exportObjectShadows || liveShadowPreview || force);
           object.receiveShadow = isGroundReceiver
             ? exportShadows || liveShadowPreview || force
-            : exportObjectShadows || liveShadowPreview || force;
+            : exportObjectShadows ||
+              liveShadowPreview ||
+              force ||
+              (selectedExportRenderStyle.mode === "realistic" && exportShadows);
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
