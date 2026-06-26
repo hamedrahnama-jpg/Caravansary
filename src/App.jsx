@@ -131,7 +131,6 @@ const EXPORT_QUALITY_OPTIONS = {
 };
 const SECTION_LINE_LENGTH = 120;
 const SECTION_LINE_PICK_DISTANCE = 0.45;
-const DEFAULT_SUN_EAST_WEST = -55;
 const DIMENSION_UNITS = {
   stage: { label: "stage", factor: 1 },
   px: { label: "px", factor: 100 }
@@ -147,37 +146,6 @@ function darkenHexColor(hex, amount = 0.4) {
   color.g *= 1 - amount;
   color.b *= 1 - amount;
   return `#${color.getHexString()}`;
-}
-
-function getSunPositionFromEastWest(value) {
-  const eastWest = THREE.MathUtils.clamp(asNumber(value, DEFAULT_SUN_EAST_WEST), -100, 100);
-  const travel = eastWest / 100;
-  return new THREE.Vector3(-travel * 32, 28, 16);
-}
-
-function configureSunShadowForModel(sun, modelGroup, sunEastWest, mapSize = null) {
-  if (!sun?.shadow) return;
-  const bounds = modelGroup ? new THREE.Box3().setFromObject(modelGroup) : new THREE.Box3();
-  const hasModel = !bounds.isEmpty();
-  const center = hasModel ? bounds.getCenter(new THREE.Vector3()) : new THREE.Vector3();
-  const size = hasModel ? bounds.getSize(new THREE.Vector3()) : new THREE.Vector3(24, 8, 24);
-  const radius = Math.max(size.x, size.y, size.z, 24) * 0.75;
-
-  sun.position.copy(center).add(getSunPositionFromEastWest(sunEastWest));
-  sun.target.position.copy(center);
-  sun.target.updateMatrixWorld();
-
-  sun.shadow.camera.left = -radius;
-  sun.shadow.camera.right = radius;
-  sun.shadow.camera.top = radius;
-  sun.shadow.camera.bottom = -radius;
-  sun.shadow.camera.near = 0.5;
-  sun.shadow.camera.far = Math.max(radius * 5, 120);
-  sun.shadow.camera.updateProjectionMatrix();
-  if (mapSize) {
-    sun.shadow.mapSize.set(mapSize, mapSize);
-  }
-  sun.shadow.needsUpdate = true;
 }
 
 function formatDimensionInput(value, unitKey) {
@@ -517,31 +485,6 @@ function getObjectBox(object) {
   return new THREE.Box3().setFromObject(object);
 }
 
-function hasPlacedModuleAncestor(object) {
-  let current = object;
-  while (current) {
-    if (current.userData?.itemId) return true;
-    current = current.parent;
-  }
-  return false;
-}
-
-function isGeneratedShadowHelper(object) {
-  return Boolean(
-    object.userData?.isExportEdge ||
-      object.userData?.isSectionCap ||
-      object.userData?.isStageMap ||
-      object.userData?.isFloor ||
-      object.userData?.isExportGroundBackdrop ||
-      object.userData?.isSectionBackdrop ||
-      object.userData?.isStageMarker
-  );
-}
-
-function isRealModuleShadowCaster(object) {
-  return Boolean(object.isMesh && object.visible && !isGeneratedShadowHelper(object) && hasPlacedModuleAncestor(object));
-}
-
 function applyExactDimensions(group, dimensions) {
   group.updateWorldMatrix(true, true);
   const size = new THREE.Box3().setFromObject(group).getSize(new THREE.Vector3());
@@ -627,20 +570,64 @@ diffuseColor.rgb *= mix(realisticTopSurface, realisticVerticalSurface, realistic
 }
 
 function createRealisticGroundMaterial(baseColor = "#beb9b1") {
-  return new THREE.MeshStandardMaterial({
+  const material = new THREE.MeshStandardMaterial({
     color: baseColor,
     metalness: 0,
-    roughness: 0.86,
-    side: THREE.DoubleSide
+    roughness: 0.98
   });
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+varying vec3 vSoilWorldPosition;`
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+vSoilWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+varying vec3 vSoilWorldPosition;
+
+float soilHash(vec2 p) {
+  return fract(sin(dot(p, vec2(41.23, 289.71))) * 39142.349);
+}
+
+float soilNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  float a = soilHash(i);
+  float b = soilHash(i + vec2(1.0, 0.0));
+  float c = soilHash(i + vec2(0.0, 1.0));
+  float d = soilHash(i + vec2(1.0, 1.0));
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+}`
+      )
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+vec2 soilUv = vSoilWorldPosition.xz * 3.2;
+float soilFine = soilNoise(soilUv * 10.0) * 0.13;
+float soilCoarse = soilNoise(soilUv * 2.0) * 0.18;
+float soilRidges = sin((soilUv.x + soilNoise(soilUv * 0.55)) * 16.0) * 0.035;
+vec3 soilA = vec3(0.56, 0.47, 0.36);
+vec3 soilB = vec3(0.72, 0.63, 0.49);
+diffuseColor.rgb *= mix(soilA, soilB, soilCoarse + soilFine) + soilRidges;`
+      );
+  };
+  material.customProgramCacheKey = () => "caravansary-realistic-soil-v1";
+  return material;
 }
 
 function createMaterial(module, style) {
   if (style.mode === "hidden") {
-    return new THREE.MeshStandardMaterial({
-      color: style.colorOverride,
-      metalness: 0,
-      roughness: 0.96
+    return new THREE.MeshBasicMaterial({
+      color: style.colorOverride
     });
   }
 
@@ -1489,8 +1476,6 @@ export default function App() {
   const [sectionYOffset, setSectionYOffset] = useState(0);
   const [planSectionEnabled, setPlanSectionEnabled] = useState(false);
   const [planSectionHeight, setPlanSectionHeight] = useState(1);
-  const [sunEastWest, setSunEastWest] = useState(DEFAULT_SUN_EAST_WEST);
-  const [liveShadowPreview, setLiveShadowPreview] = useState(false);
   const [walkMode, setWalkMode] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [rotation, setRotation] = useState(0);
@@ -1684,8 +1669,7 @@ export default function App() {
     const sun = new THREE.DirectionalLight("#ffffff", 3.2);
     ambientLightRef.current = ambient;
     sunLightRef.current = sun;
-    sun.position.copy(getSunPositionFromEastWest(DEFAULT_SUN_EAST_WEST));
-    sun.target.position.set(0, 0, 0);
+    sun.position.set(18, 28, 16);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.bias = -0.0004;
@@ -1696,7 +1680,7 @@ export default function App() {
     sun.shadow.camera.bottom = -45;
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = 90;
-    scene.add(ambient, sun, sun.target, modelGroup);
+    scene.add(ambient, sun, modelGroup);
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(80, 80),
@@ -1713,10 +1697,7 @@ export default function App() {
     gridRef.current = grid;
     scene.add(grid);
 
-    const stageMapMaterial = new THREE.MeshStandardMaterial({
-      color: "#ffffff",
-      metalness: 0,
-      roughness: 1,
+    const stageMapMaterial = new THREE.MeshBasicMaterial({
       transparent: true,
       opacity: 0.58,
       depthTest: true,
@@ -1730,7 +1711,6 @@ export default function App() {
     stageMap.rotation.x = -Math.PI / 2;
     stageMap.position.y = 0.015;
     stageMap.visible = false;
-    stageMap.receiveShadow = true;
     stageMap.renderOrder = 2;
     stageMap.userData.isStageMap = true;
     stageMapRef.current = { mesh: stageMap, material: stageMapMaterial, texture: null };
@@ -2224,27 +2204,15 @@ export default function App() {
     const sun = sunLightRef.current;
     const renderer = rendererRef.current;
     const modelGroup = modelGroupRef.current;
-    const floor = floorRef.current;
     if (!ambient || !sun || !renderer) return;
-
-    const groundShadowsActive = walkMode || liveShadowPreview || exportShadows;
-    const objectShadowsActive = walkMode || liveShadowPreview || exportObjectShadows;
-    const anyShadowsActive = groundShadowsActive || objectShadowsActive;
-    if (anyShadowsActive) {
-      configureSunShadowForModel(sun, modelGroup, sunEastWest, 2048);
-    } else {
-      sun.position.copy(getSunPositionFromEastWest(sunEastWest));
-      sun.target.position.set(0, 0, 0);
-      sun.target.updateMatrixWorld();
-      sun.shadow.needsUpdate = true;
-    }
 
     if (walkMode) {
       ambient.intensity = 0.08;
       ambient.groundColor.set("#1e1a14");
       sun.intensity = 3.8;
-      renderer.shadowMap.enabled = anyShadowsActive;
-      renderer.shadowMap.needsUpdate = anyShadowsActive;
+      sun.position.set(22, 32, 12);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.needsUpdate = true;
       sun.shadow.needsUpdate = true;
       setExportEdgesVisible(modelGroup, false);
       markSceneMaterialsForUpdate(modelGroup);
@@ -2252,36 +2220,14 @@ export default function App() {
       ambient.intensity = 1.35;
       ambient.groundColor.set("#8d735d");
       sun.intensity = 3.2;
-      renderer.shadowMap.enabled = anyShadowsActive;
-      renderer.shadowMap.needsUpdate = anyShadowsActive;
+      sun.position.set(18, 28, 16);
+      renderer.shadowMap.enabled = false;
       setExportEdgesVisible(modelGroup, true);
       markSceneMaterialsForUpdate(modelGroup);
     }
-    if (floor) {
-      floor.receiveShadow = groundShadowsActive;
-      floor.material.needsUpdate = true;
-    }
-    if (modelGroup) {
-      modelGroup.traverse((object) => {
-        if (!object.isMesh) return;
-        object.castShadow = isRealModuleShadowCaster(object) && anyShadowsActive;
-        object.receiveShadow = isRealModuleShadowCaster(object) && objectShadowsActive;
-      });
-    }
     requestSceneRender();
     requestSectionViewportRender();
-  }, [
-    walkMode,
-    placed.length,
-    edgeColor,
-    edgeThickness,
-    sunEastWest,
-    liveShadowPreview,
-    exportShadows,
-    exportObjectShadows,
-    requestSceneRender,
-    requestSectionViewportRender
-  ]);
+  }, [walkMode, placed.length, edgeColor, edgeThickness, requestSceneRender, requestSectionViewportRender]);
 
   useEffect(() => {
     const controls = controlsRef.current;
@@ -2938,10 +2884,6 @@ export default function App() {
         rotation,
         scale: modelScale
       },
-      environment: {
-        sunEastWest,
-        liveShadowPreview
-      },
       modules: modules.map(getStoredModuleSnapshot),
       placed: placedRef.current.map((item) => ({
         moduleId: item.module.id,
@@ -3043,12 +2985,6 @@ export default function App() {
         setRotation(THREE.MathUtils.clamp(asNumber(design.transform.rotation, 0), -180, 180));
         setModelScale(THREE.MathUtils.clamp(asNumber(design.transform.scale, 1), 0.05, 10));
       }
-      if (design.environment) {
-        setSunEastWest(
-          THREE.MathUtils.clamp(asNumber(design.environment.sunEastWest, DEFAULT_SUN_EAST_WEST), -100, 100)
-        );
-        setLiveShadowPreview(Boolean(design.environment.liveShadowPreview));
-      }
     }
 
     const style = STYLES[styleKey];
@@ -3103,10 +3039,6 @@ export default function App() {
       if (mode === "open") {
         setRotation(THREE.MathUtils.clamp(asNumber(design.transform?.rotation, 0), -180, 180));
         setModelScale(THREE.MathUtils.clamp(asNumber(design.transform?.scale, 1), 0.05, 10));
-        setSunEastWest(
-          THREE.MathUtils.clamp(asNumber(design.environment?.sunEastWest, DEFAULT_SUN_EAST_WEST), -100, 100)
-        );
-        setLiveShadowPreview(Boolean(design.environment?.liveShadowPreview));
       }
     } catch {
       setSaveStatus("Open failed");
@@ -3356,13 +3288,6 @@ export default function App() {
     const currentClearAlpha = renderer.getClearAlpha();
     const currentPixelRatio = renderer.getPixelRatio();
     const currentSize = renderer.getSize(new THREE.Vector2());
-    const ambient = ambientLightRef.current;
-    const sun = sunLightRef.current;
-    const currentAmbientIntensity = ambient?.intensity ?? null;
-    const currentAmbientGroundColor = ambient?.groundColor ? ambient.groundColor.clone() : null;
-    const currentSunIntensity = sun?.intensity ?? null;
-    const currentSunPosition = sun?.position ? sun.position.clone() : null;
-    const currentSunTargetPosition = sun?.target?.position ? sun.target.position.clone() : null;
     const activeCamera = controls.object;
     const currentCameraFov = activeCamera.isPerspectiveCamera ? activeCamera.fov : null;
     const currentCameraAspect = activeCamera.isPerspectiveCamera ? activeCamera.aspect : null;
@@ -3373,10 +3298,6 @@ export default function App() {
       formatMaxSide / Math.max(currentSize.x, currentSize.y, 1)
     );
     const exportSuffix = `${exportScale.toFixed(2).replace(/\.?0+$/, "")}x`;
-    const buildShadowActive = currentShadowEnabled || liveShadowPreview || walkMode;
-    const exportGroundShadowsActive = exportShadows || buildShadowActive;
-    const exportObjectShadowsActive = exportObjectShadows || buildShadowActive;
-    const exportAnyShadowsActive = exportGroundShadowsActive || exportObjectShadowsActive;
     const hiddenHelpers = [];
     const shadowSettings = [];
     let temporaryFloorMaterial = null;
@@ -3389,7 +3310,7 @@ export default function App() {
       }
     });
     scene.traverse((object) => {
-      if (object.userData?.isStageMarker && object.visible) {
+      if ((object.userData?.isStageMarker || object.userData?.isStageMap) && object.visible) {
         hiddenHelpers.push(object);
         object.visible = false;
       }
@@ -3431,12 +3352,7 @@ export default function App() {
       if (selectedExportRenderStyle.mode === "realistic") {
         return createRealisticGroundMaterial(exportStageColor);
       }
-      return new THREE.MeshStandardMaterial({
-        color: exportStageColor,
-        metalness: 0,
-        roughness: 0.86,
-        side: THREE.DoubleSide
-      });
+      return new THREE.MeshBasicMaterial({ color: exportStageColor, side: THREE.DoubleSide });
     }
 
     function forEachMaterial(material, callback) {
@@ -3448,9 +3364,8 @@ export default function App() {
     }
 
     function prepareExportShadows(force = false) {
-      const shouldRenderShadows = exportAnyShadowsActive || force;
+      const shouldRenderShadows = exportShadows || exportObjectShadows || force;
       if (!shouldRenderShadows) return;
-      configureSunShadowForModel(sunLightRef.current, modelGroup, sunEastWest, quality.shadowMapSize);
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.shadowMap.needsUpdate = true;
@@ -3466,9 +3381,9 @@ export default function App() {
               radius: object.shadow.radius
             });
             object.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
-            object.shadow.bias = -0.0004;
-            object.shadow.normalBias = 0.03;
-            object.shadow.radius = 1;
+            object.shadow.bias = -0.0002;
+            object.shadow.normalBias = 0.015;
+            object.shadow.radius = 2.5;
           }
         });
         exportShadowQualityApplied = true;
@@ -3478,16 +3393,8 @@ export default function App() {
           object.shadow.needsUpdate = true;
         }
         if (object.isMesh) {
-          const isGroundReceiver =
-            object === floor ||
-            object.userData?.isStageMap ||
-            object.userData?.isExportGroundBackdrop ||
-            object.userData?.isSectionBackdrop;
-          const isModuleShadowCaster = isRealModuleShadowCaster(object);
-          object.castShadow = isModuleShadowCaster && (exportAnyShadowsActive || force);
-          object.receiveShadow = isGroundReceiver
-            ? exportGroundShadowsActive || force
-            : isModuleShadowCaster && (exportObjectShadowsActive || force);
+          object.castShadow = object !== floor && (exportShadows || exportObjectShadows || force);
+          object.receiveShadow = object === floor ? exportShadows || force : exportObjectShadows || force;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
@@ -3503,10 +3410,7 @@ export default function App() {
       ambient.intensity = darkExport ? 0.015 : 0.08;
       ambient.groundColor.set(darkExport ? "#050403" : "#1e1a14");
       sun.intensity = darkExport ? 1.85 : 3.8;
-      sun.position.copy(getSunPositionFromEastWest(sunEastWest));
-      sun.target.position.set(0, 0, 0);
-      sun.target.updateMatrixWorld();
-      sun.shadow.needsUpdate = true;
+      sun.position.set(22, 32, 12);
     }
 
     function forceWalkExportStage() {
@@ -3541,7 +3445,7 @@ export default function App() {
 
     function forceWalkExportShadows() {
       const sun = sunLightRef.current;
-      const shouldRenderShadows = exportAnyShadowsActive;
+      const shouldRenderShadows = exportShadows || exportObjectShadows;
       if (!shouldRenderShadows) {
         renderer.shadowMap.enabled = false;
         floor.receiveShadow = false;
@@ -3558,18 +3462,17 @@ export default function App() {
       renderer.shadowMap.needsUpdate = true;
       if (sun?.shadow) {
         sun.castShadow = true;
-        configureSunShadowForModel(sun, modelGroup, sunEastWest, quality.shadowMapSize);
+        sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
         sun.shadow.bias = -0.0002;
         sun.shadow.normalBias = 0.015;
         sun.shadow.radius = 2.5;
         sun.shadow.needsUpdate = true;
       }
-      floor.receiveShadow = exportGroundShadowsActive;
+      floor.receiveShadow = exportShadows;
       modelGroup.traverse((object) => {
         if (object.isMesh) {
-          const isModuleShadowCaster = isRealModuleShadowCaster(object);
-          object.castShadow = isModuleShadowCaster && exportAnyShadowsActive;
-          object.receiveShadow = isModuleShadowCaster && exportObjectShadowsActive;
+          object.castShadow = object !== floor && (exportShadows || exportObjectShadows);
+          object.receiveShadow = exportObjectShadows;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
@@ -3648,20 +3551,6 @@ export default function App() {
       });
       if (walkMode) {
         applyWalkExportLighting();
-      } else {
-        if (ambient && currentAmbientIntensity !== null) {
-          ambient.intensity = currentAmbientIntensity;
-          if (currentAmbientGroundColor) ambient.groundColor.copy(currentAmbientGroundColor);
-        }
-        if (sun && currentSunIntensity !== null) {
-          sun.intensity = currentSunIntensity;
-          if (currentSunPosition) sun.position.copy(currentSunPosition);
-          if (currentSunTargetPosition) {
-            sun.target.position.copy(currentSunTargetPosition);
-            sun.target.updateMatrixWorld();
-          }
-          sun.shadow.needsUpdate = true;
-        }
       }
       renderer.render(scene, controls.object);
     }
@@ -3852,8 +3741,8 @@ export default function App() {
       activeCamera.aspect = exportWidth / exportHeight;
       activeCamera.updateProjectionMatrix();
     }
-    renderer.shadowMap.enabled = exportAnyShadowsActive;
-    if (exportAnyShadowsActive) {
+    renderer.shadowMap.enabled = exportShadows || exportObjectShadows;
+    if (exportShadows || exportObjectShadows) {
       renderer.shadowMap.needsUpdate = true;
     }
 
@@ -3874,12 +3763,12 @@ export default function App() {
         }
         renderer.compile(scene, controls.object);
         renderer.render(scene, controls.object);
-      } else if (exportAnyShadowsActive) {
+      } else if (exportShadows || exportObjectShadows) {
         applyRenderStyle(selectedExportRenderStyle);
         if (grid) grid.visible = false;
         applyExportGroundMaterial(selectedExportRenderStyle);
         floor.visible = true;
-        floor.receiveShadow = exportGroundShadowsActive;
+        floor.receiveShadow = exportShadows;
         prepareExportShadows();
         renderer.render(scene, controls.object);
       } else {
@@ -3942,8 +3831,6 @@ export default function App() {
             )
             .setPosition(new THREE.Vector3(center.x - maxSize * 1.6, modelBottom - height / 2, center.z));
         }
-        backdrop.receiveShadow = exportGroundShadowsActive;
-        backdrop.userData.isExportGroundBackdrop = true;
         backdrop.renderOrder = -10;
         scene.add(backdrop);
         viewGroundBackdrops.push(backdrop);
@@ -3959,7 +3846,7 @@ export default function App() {
       }
 
       if (grid) grid.visible = false;
-      if (exportGroundShadowsActive) {
+      if (exportShadows) {
         temporaryFloorMaterial = new THREE.ShadowMaterial({
           color: "#000000",
           opacity: 0.28,
@@ -3967,7 +3854,6 @@ export default function App() {
         });
         floor.material = temporaryFloorMaterial;
         floor.visible = true;
-        floor.receiveShadow = true;
       } else {
         floor.visible = false;
       }
@@ -3981,8 +3867,7 @@ export default function App() {
       panels.forEach((panel) => {
         clearViewGroundBackdrops();
         applyRenderStyle(panel.style, { updateFloor: false });
-        floor.visible = exportGroundShadowsActive;
-        floor.receiveShadow = exportGroundShadowsActive;
+        floor.visible = exportShadows;
         addViewGroundBackdrop(panel.view);
         renderer.setViewport(panel.x, panel.y, panelWidth, panelHeight);
         renderer.setScissor(panel.x, panel.y, panelWidth, panelHeight);
@@ -4061,7 +3946,6 @@ export default function App() {
         const backdrop = new THREE.Mesh(geometry, material);
         backdrop.matrixAutoUpdate = false;
         backdrop.matrix.makeBasis(direction, up, normal).setPosition(planePoint);
-        backdrop.receiveShadow = exportGroundShadowsActive;
         backdrop.renderOrder = -10;
         backdrop.userData.isSectionBackdrop = true;
         scene.add(backdrop);
@@ -4204,11 +4088,7 @@ export default function App() {
         if (line) line.visible = false;
       });
       if (grid) grid.visible = false;
-      floor.visible = exportGroundShadowsActive;
-      floor.receiveShadow = exportGroundShadowsActive;
-      if (floor.visible) {
-        applyExportGroundMaterial(selectedExportRenderStyle);
-      }
+      floor.visible = false;
       scene.background = new THREE.Color(exportBackgroundColor);
       renderer.setClearColor(exportBackgroundColor, 1);
       renderer.autoClear = false;
@@ -4222,8 +4102,7 @@ export default function App() {
         renderer.clippingPlanes = isMainPlan ? [planCut.clippingPlane] : [];
         const materialSides = isMainPlan ? setObjectMaterialSide(modelGroup, THREE.DoubleSide) : [];
         if (capGroup) capGroup.visible = isMainPlan;
-        floor.visible = isMainPlan && (selectedExportRenderStyle.mode === "realistic" || exportGroundShadowsActive);
-        floor.receiveShadow = exportGroundShadowsActive;
+        floor.visible = isMainPlan && selectedExportRenderStyle.mode === "realistic";
         if (floor.visible) {
           applyExportGroundMaterial(selectedExportRenderStyle);
         }
@@ -4643,10 +4522,6 @@ export default function App() {
   const updateWholeModelScale = (value) => {
     setModelScale(THREE.MathUtils.clamp(asNumber(value, 1), 0.05, 10));
   };
-  const updateSunEastWest = (value) => {
-    setSunEastWest(THREE.MathUtils.clamp(asNumber(value, DEFAULT_SUN_EAST_WEST), -100, 100));
-    setLiveShadowPreview(true);
-  };
   const selectedPlacedLabel =
     selectedPlacedIds.length > 1
       ? `${selectedPlacedIds.length} selected`
@@ -4925,30 +4800,6 @@ export default function App() {
                   value={modelScale}
                   aria-label="Whole model scale"
                   onChange={(event) => updateWholeModelScale(event.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="tool-group">
-              <label htmlFor="sun-east-west">Sun East / West</label>
-              <div className="range-input-row">
-                <input
-                  id="sun-east-west"
-                  type="range"
-                  min="-100"
-                  max="100"
-                  step="1"
-                  value={sunEastWest}
-                  onChange={(event) => updateSunEastWest(event.target.value)}
-                />
-                <input
-                  type="number"
-                  min="-100"
-                  max="100"
-                  step="1"
-                  value={sunEastWest}
-                  aria-label="Sun east west position"
-                  onChange={(event) => updateSunEastWest(event.target.value)}
                 />
               </div>
             </div>
