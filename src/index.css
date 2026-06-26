@@ -640,6 +640,11 @@ h1 {
   font-weight: 900;
 }
 
+.map-guide-controls button.active {
+  border-color: #172024;
+  background: #172024;
+}
+
 .map-model-list {
   display: grid;
   gap: 6px;
@@ -654,34 +659,62 @@ h1 {
   font-weight: 800;
 }
 
-.map-model-list button {
+.map-model-item {
   display: grid;
-  gap: 2px;
+  gap: 8px;
   min-width: 0;
   padding: 8px;
   border: 1px solid #d5ddd9;
   border-radius: 7px;
   color: #26353a;
   background: #f9faf7;
-  text-align: left;
 }
 
-.map-model-list strong,
-.map-model-list span {
+.map-model-item label {
+  display: grid;
+  gap: 4px;
+  color: #344348;
+  font-size: 0.64rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.map-model-item input {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid #bec9c5;
+  border-radius: 6px;
+  color: #1f2d31;
+  background: #ffffff;
 }
 
-.map-model-list strong {
-  color: #172024;
-  font-size: 0.82rem;
+.map-model-coordinate-row,
+.map-model-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
-.map-model-list span {
-  color: #657276;
+.map-model-actions button {
+  min-height: 30px;
+  border: 1px solid #c7d1ce;
+  border-radius: 6px;
+  color: #26353a;
+  background: #ffffff;
   font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.map-model-actions button:hover {
+  border-color: #38535a;
+  background: #edf4f3;
+}
+
+.map-model-actions button.danger {
+  border-color: #c9473d;
+  color: #ffffff;
+  background: #c9473d;
 }
 
 .section-viewport {

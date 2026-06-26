@@ -123,6 +123,7 @@ const MODULE_STORAGE_KEY = "caravansary.modules.v1";
 const MODEL_LOCATIONS_STORAGE_KEY = "caravansary.locationModels.v1";
 const MODULE_DB_NAME = "caravansary-module-assets";
 const MODULE_DB_STORE = "assets";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 const EDGE_SNAP_DISTANCE = 0.55;
 const EXPORT_QUALITY_OPTIONS = {
   standard: { label: "Standard", scale: 3, maxSide: 6000, shadowMapSize: 4096 },
@@ -415,11 +416,40 @@ async function saveSupabaseLocationModel(model) {
   return data;
 }
 
+async function deleteSupabaseLocationModel(modelId) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("location_models")
+    .delete()
+    .eq("id", modelId);
+  if (error) throw error;
+}
+
+function createModelLocationId() {
+  return window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function getGoogleSatelliteUrl(lat, lon, zoom) {
   const safeLat = asNumber(lat, 0);
   const safeLon = asNumber(lon, 0);
   const safeZoom = Math.round(THREE.MathUtils.clamp(asNumber(zoom, 18), 1, 21));
   return `https://maps.google.com/maps?q=${safeLat},${safeLon}&z=${safeZoom}&t=k&output=embed`;
+}
+
+function getGoogleStaticMapUrl(lat, lon, zoom) {
+  if (!GOOGLE_MAPS_API_KEY) return null;
+  const safeLat = asNumber(lat, 0);
+  const safeLon = asNumber(lon, 0);
+  const safeZoom = Math.round(THREE.MathUtils.clamp(asNumber(zoom, 18), 1, 21));
+  const params = new URLSearchParams({
+    center: `${safeLat},${safeLon}`,
+    zoom: String(safeZoom),
+    size: "640x640",
+    scale: "2",
+    maptype: "satellite",
+    key: GOOGLE_MAPS_API_KEY
+  });
+  return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
 }
 
 function downloadBlob(filename, blob) {
@@ -1364,6 +1394,7 @@ export default function App() {
   const pointerRef = useRef(new THREE.Vector2());
   const floorRef = useRef(null);
   const gridRef = useRef(null);
+  const stageMapRef = useRef({ mesh: null, material: null, texture: null });
   const dragRef = useRef({
     active: false,
     object: null,
@@ -1422,9 +1453,11 @@ export default function App() {
   const [selectionBox, setSelectionBox] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
+  const [mapStageVisible, setMapStageVisible] = useState(false);
   const [mapLat, setMapLat] = useState(35.6892);
   const [mapLon, setMapLon] = useState(51.389);
   const [mapZoom, setMapZoom] = useState(18);
+  const [mapRefreshKey, setMapRefreshKey] = useState(0);
   const [locationModelName, setLocationModelName] = useState("New site model");
   const [locationModels, setLocationModels] = useState(loadLocalLocationModels);
   const [dimensionUnit, setDimensionUnit] = useState("stage");
@@ -1628,6 +1661,25 @@ export default function App() {
     gridRef.current = grid;
     scene.add(grid);
 
+    const stageMapMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.58,
+      depthTest: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1
+    });
+    const stageMap = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), stageMapMaterial);
+    stageMap.rotation.x = -Math.PI / 2;
+    stageMap.position.y = 0.015;
+    stageMap.visible = false;
+    stageMap.renderOrder = 2;
+    stageMap.userData.isStageMap = true;
+    stageMapRef.current = { mesh: stageMap, material: stageMapMaterial, texture: null };
+    scene.add(stageMap);
+
     const stageMarkers = createStageDirectionMarkers();
     scene.add(stageMarkers);
 
@@ -1697,6 +1749,10 @@ export default function App() {
         line?.material.dispose();
       });
       sectionLinesRef.current = { x: null, y: null };
+      stageMap.geometry.dispose();
+      stageMapMaterial.map?.dispose();
+      stageMapMaterial.dispose();
+      stageMapRef.current = { mesh: null, material: null, texture: null };
       disposeStageMarkerGroup(stageMarkers);
       clearSectionCaps(sectionCapGroup);
       sectionCapGroupRef.current = null;
@@ -1962,10 +2018,66 @@ export default function App() {
   useEffect(() => {
     if (modelGroupRef.current) {
       modelGroupRef.current.rotation.y = THREE.MathUtils.degToRad(rotation);
+      if (stageMapRef.current.mesh) {
+        stageMapRef.current.mesh.rotation.z = THREE.MathUtils.degToRad(rotation);
+      }
       requestSceneRender();
       requestSectionViewportRender();
     }
   }, [rotation, requestSceneRender, requestSectionViewportRender]);
+
+  useEffect(() => {
+    const stageMap = stageMapRef.current.mesh;
+    const stageMapMaterial = stageMapRef.current.material;
+    if (!stageMap || !stageMapMaterial) return undefined;
+
+    if (!mapStageVisible) {
+      stageMap.visible = false;
+      requestSceneRender();
+      return undefined;
+    }
+
+    const textureUrl = getGoogleStaticMapUrl(mapLat, mapLon, mapZoom);
+    if (!textureUrl) {
+      stageMap.visible = false;
+      setSaveStatus("Stage map needs Google API key");
+      requestSceneRender();
+      return undefined;
+    }
+
+    let cancelled = false;
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.setCrossOrigin("anonymous");
+    textureLoader.load(
+      textureUrl,
+      (texture) => {
+        if (cancelled) {
+          texture.dispose();
+          return;
+        }
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = Math.min(rendererRef.current?.capabilities.getMaxAnisotropy?.() ?? 1, 8);
+        stageMapRef.current.texture?.dispose();
+        stageMapRef.current.texture = texture;
+        stageMapMaterial.map = texture;
+        stageMapMaterial.needsUpdate = true;
+        stageMap.visible = true;
+        requestSceneRender();
+      },
+      undefined,
+      () => {
+        if (!cancelled) {
+          stageMap.visible = false;
+          setSaveStatus("Stage map failed");
+          requestSceneRender();
+        }
+      }
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapLat, mapLon, mapStageVisible, mapZoom, requestSceneRender]);
 
   useEffect(() => {
     const lineX = sectionLinesRef.current.x;
@@ -2838,13 +2950,14 @@ export default function App() {
 
     const style = STYLES[styleKey];
     const nextItems = [];
-    const moduleById = new Map(modules.map((module) => [module.id, module]));
     const designModules = (design.modules ?? []).map(getRuntimeModule);
+    const designModuleById = new Map(designModules.map((module) => [module.id, module]));
+    const moduleById = new Map(modules.map((module) => [module.id, module]));
 
     for (const savedItem of design.placed) {
       const baseModule =
+        designModuleById.get(savedItem.moduleId) ??
         moduleById.get(savedItem.moduleId) ??
-        designModules.find((module) => module.id === savedItem.moduleId) ??
         getRuntimeModule(savedItem.module);
       if (!baseModule) continue;
 
@@ -2899,7 +3012,7 @@ export default function App() {
     }
 
     const model = {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      id: createModelLocationId(),
       name: locationModelName.trim() || `Site ${locationModels.length + 1}`,
       lat: asNumber(mapLat, 0),
       lon: asNumber(mapLon, 0),
@@ -2924,6 +3037,7 @@ export default function App() {
       setMapLat(model.lat);
       setMapLon(model.lon);
       setMapZoom(model.zoom ?? 18);
+      setMapRefreshKey((current) => current + 1);
       setLocationModelName(model.name);
       await restoreDesignSnapshot(model.design);
       setRotation(0);
@@ -2931,6 +3045,57 @@ export default function App() {
       setSaveStatus(`Loaded ${model.name}`);
     } catch {
       setSaveStatus("Location load failed");
+    }
+  }
+
+  function updateLocationModelDraft(modelId, field, value) {
+    setLocationModels((current) =>
+      current.map((model) => {
+        if (model.id !== modelId) return model;
+        if (field === "name") return { ...model, name: value };
+        if (field === "zoom") {
+          return { ...model, zoom: Math.round(THREE.MathUtils.clamp(asNumber(value, model.zoom ?? 18), 1, 21)) };
+        }
+        return { ...model, [field]: asNumber(value, model[field] ?? 0) };
+      })
+    );
+  }
+
+  async function saveLocationModelEdits(model) {
+    try {
+      const nextModel = {
+        ...model,
+        name: model.name.trim() || "Untitled model",
+        lat: asNumber(model.lat, 0),
+        lon: asNumber(model.lon, 0),
+        zoom: Math.round(THREE.MathUtils.clamp(asNumber(model.zoom, 18), 1, 21)),
+        updated_at: new Date().toISOString()
+      };
+      const saved = isSupabaseConfigured ? await saveSupabaseLocationModel(nextModel) : nextModel;
+      const nextModels = locationModels.map((item) => (item.id === saved.id ? saved : item));
+      setLocationModels(nextModels);
+      saveLocalLocationModels(nextModels);
+      setMapLat(saved.lat);
+      setMapLon(saved.lon);
+      setMapZoom(saved.zoom ?? 18);
+      setMapRefreshKey((current) => current + 1);
+      setSaveStatus(isSupabaseConfigured ? "Location updated in cloud" : "Location updated");
+    } catch {
+      setSaveStatus("Location update failed");
+    }
+  }
+
+  async function deleteLocationModel(modelId) {
+    try {
+      if (isSupabaseConfigured) {
+        await deleteSupabaseLocationModel(modelId);
+      }
+      const nextModels = locationModels.filter((model) => model.id !== modelId);
+      setLocationModels(nextModels);
+      saveLocalLocationModels(nextModels);
+      setSaveStatus("Location deleted");
+    } catch {
+      setSaveStatus("Location delete failed");
     }
   }
 
@@ -3089,7 +3254,7 @@ export default function App() {
       }
     });
     scene.traverse((object) => {
-      if (object.userData?.isStageMarker && object.visible) {
+      if ((object.userData?.isStageMarker || object.userData?.isStageMap) && object.visible) {
         hiddenHelpers.push(object);
         object.visible = false;
       }
@@ -4902,6 +5067,7 @@ export default function App() {
                 <button type="button" onClick={() => setMapGuideOpen(false)} aria-label="Close map guide">x</button>
               </div>
               <iframe
+                key={`guide-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
                 title="Google satellite map"
                 src={getGoogleSatelliteUrl(mapLat, mapLon, mapZoom)}
                 loading="lazy"
@@ -4948,16 +5114,67 @@ export default function App() {
                 <button type="button" onClick={() => void saveCurrentModelToLocation()}>
                   Tag Model
                 </button>
+                <button
+                  type="button"
+                  className={mapStageVisible ? "active" : ""}
+                  onClick={() => setMapStageVisible((current) => !current)}
+                >
+                  Stage Map
+                </button>
               </div>
               <div className="map-model-list">
                 {locationModels.length === 0 ? (
                   <span>No tagged models</span>
                 ) : (
                   locationModels.map((model) => (
-                    <button key={model.id} type="button" onClick={() => void openLocationModel(model)}>
-                      <strong>{model.name}</strong>
-                      <span>{Number(model.lat).toFixed(5)}, {Number(model.lon).toFixed(5)}</span>
-                    </button>
+                    <div key={model.id} className="map-model-item">
+                      <label>
+                        Name
+                        <input
+                          type="text"
+                          value={model.name}
+                          onChange={(event) => updateLocationModelDraft(model.id, "name", event.target.value)}
+                        />
+                      </label>
+                      <div className="map-model-coordinate-row">
+                        <label>
+                          Lat
+                          <input
+                            type="number"
+                            step="0.000001"
+                            value={model.lat}
+                            onChange={(event) => updateLocationModelDraft(model.id, "lat", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Lon
+                          <input
+                            type="number"
+                            step="0.000001"
+                            value={model.lon}
+                            onChange={(event) => updateLocationModelDraft(model.id, "lon", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Zoom
+                          <input
+                            type="number"
+                            min="1"
+                            max="21"
+                            step="1"
+                            value={model.zoom ?? 18}
+                            onChange={(event) => updateLocationModelDraft(model.id, "zoom", event.target.value)}
+                          />
+                        </label>
+                      </div>
+                      <div className="map-model-actions">
+                        <button type="button" onClick={() => void openLocationModel(model)}>Open</button>
+                        <button type="button" onClick={() => void saveLocationModelEdits(model)}>Save</button>
+                        <button type="button" className="danger" onClick={() => void deleteLocationModel(model.id)}>
+                          Delete
+                        </button>
+                      </div>
+                    </div>
                   ))
                 )}
               </div>
