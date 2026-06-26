@@ -155,6 +155,31 @@ function getSunPositionFromEastWest(value) {
   return new THREE.Vector3(-travel * 32, 28, 16);
 }
 
+function configureSunShadowForModel(sun, modelGroup, sunEastWest, mapSize = null) {
+  if (!sun?.shadow) return;
+  const bounds = modelGroup ? new THREE.Box3().setFromObject(modelGroup) : new THREE.Box3();
+  const hasModel = !bounds.isEmpty();
+  const center = hasModel ? bounds.getCenter(new THREE.Vector3()) : new THREE.Vector3();
+  const size = hasModel ? bounds.getSize(new THREE.Vector3()) : new THREE.Vector3(24, 8, 24);
+  const radius = Math.max(size.x, size.y, size.z, 24) * 0.75;
+
+  sun.position.copy(center).add(getSunPositionFromEastWest(sunEastWest));
+  sun.target.position.copy(center);
+  sun.target.updateMatrixWorld();
+
+  sun.shadow.camera.left = -radius;
+  sun.shadow.camera.right = radius;
+  sun.shadow.camera.top = radius;
+  sun.shadow.camera.bottom = -radius;
+  sun.shadow.camera.near = 0.5;
+  sun.shadow.camera.far = Math.max(radius * 5, 120);
+  sun.shadow.camera.updateProjectionMatrix();
+  if (mapSize) {
+    sun.shadow.mapSize.set(mapSize, mapSize);
+  }
+  sun.shadow.needsUpdate = true;
+}
+
 function formatDimensionInput(value, unitKey) {
   const unit = DIMENSION_UNITS[unitKey] ?? DIMENSION_UNITS.stage;
   const converted = value * unit.factor;
@@ -2177,14 +2202,17 @@ export default function App() {
     const floor = floorRef.current;
     if (!ambient || !sun || !renderer) return;
 
-    sun.position.copy(getSunPositionFromEastWest(sunEastWest));
-    sun.target.position.set(0, 0, 0);
-    sun.target.updateMatrixWorld();
-    sun.shadow.needsUpdate = true;
-
     const groundShadowsActive = walkMode || liveShadowPreview || exportShadows;
     const objectShadowsActive = walkMode || liveShadowPreview || exportObjectShadows;
     const anyShadowsActive = groundShadowsActive || objectShadowsActive;
+    if (anyShadowsActive) {
+      configureSunShadowForModel(sun, modelGroup, sunEastWest, 2048);
+    } else {
+      sun.position.copy(getSunPositionFromEastWest(sunEastWest));
+      sun.target.position.set(0, 0, 0);
+      sun.target.updateMatrixWorld();
+      sun.shadow.needsUpdate = true;
+    }
 
     if (walkMode) {
       ambient.intensity = 0.08;
@@ -3397,6 +3425,7 @@ export default function App() {
     function prepareExportShadows(force = false) {
       const shouldRenderShadows = exportAnyShadowsActive || force;
       if (!shouldRenderShadows) return;
+      configureSunShadowForModel(sunLightRef.current, modelGroup, sunEastWest, quality.shadowMapSize);
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.shadowMap.needsUpdate = true;
@@ -3504,10 +3533,7 @@ export default function App() {
       renderer.shadowMap.needsUpdate = true;
       if (sun?.shadow) {
         sun.castShadow = true;
-        sun.position.copy(getSunPositionFromEastWest(sunEastWest));
-        sun.target.position.set(0, 0, 0);
-        sun.target.updateMatrixWorld();
-        sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
+        configureSunShadowForModel(sun, modelGroup, sunEastWest, quality.shadowMapSize);
         sun.shadow.bias = -0.0002;
         sun.shadow.normalBias = 0.015;
         sun.shadow.radius = 2.5;
