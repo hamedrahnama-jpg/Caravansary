@@ -3900,13 +3900,13 @@ export default function App() {
 
       if (grid) grid.visible = false;
       if (exportGroundShadowsActive) {
-        temporaryFloorMaterial = new THREE.ShadowMaterial({
-          color: "#000000",
-          opacity: 0.28,
-          transparent: true
-        });
-        floor.material = temporaryFloorMaterial;
+        if (floor.material !== currentFloorMaterial) {
+          temporaryFloorMaterial = floor.material;
+          floor.material = currentFloorMaterial;
+        }
+        applyExportGroundMaterial(selectedExportRenderStyle);
         floor.visible = true;
+        floor.receiveShadow = true;
       } else {
         floor.visible = false;
       }
@@ -3921,6 +3921,7 @@ export default function App() {
         clearViewGroundBackdrops();
         applyRenderStyle(panel.style, { updateFloor: false });
         floor.visible = exportGroundShadowsActive;
+        floor.receiveShadow = exportGroundShadowsActive;
         addViewGroundBackdrop(panel.view);
         renderer.setViewport(panel.x, panel.y, panelWidth, panelHeight);
         renderer.setScissor(panel.x, panel.y, panelWidth, panelHeight);
@@ -4142,7 +4143,11 @@ export default function App() {
         if (line) line.visible = false;
       });
       if (grid) grid.visible = false;
-      floor.visible = false;
+      floor.visible = exportGroundShadowsActive;
+      floor.receiveShadow = exportGroundShadowsActive;
+      if (floor.visible) {
+        applyExportGroundMaterial(selectedExportRenderStyle);
+      }
       scene.background = new THREE.Color(exportBackgroundColor);
       renderer.setClearColor(exportBackgroundColor, 1);
       renderer.autoClear = false;
@@ -4156,7 +4161,8 @@ export default function App() {
         renderer.clippingPlanes = isMainPlan ? [planCut.clippingPlane] : [];
         const materialSides = isMainPlan ? setObjectMaterialSide(modelGroup, THREE.DoubleSide) : [];
         if (capGroup) capGroup.visible = isMainPlan;
-        floor.visible = isMainPlan && selectedExportRenderStyle.mode === "realistic";
+        floor.visible = isMainPlan && (selectedExportRenderStyle.mode === "realistic" || exportGroundShadowsActive);
+        floor.receiveShadow = exportGroundShadowsActive;
         if (floor.visible) {
           applyExportGroundMaterial(selectedExportRenderStyle);
         }
