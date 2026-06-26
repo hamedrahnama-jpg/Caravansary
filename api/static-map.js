@@ -28,7 +28,11 @@ export default async function handler(request, response) {
 
   const googleResponse = await fetch(`https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`);
   if (!googleResponse.ok) {
-    response.status(googleResponse.status).send(await googleResponse.text());
+    const errorText = await googleResponse.text();
+    response
+      .status(googleResponse.status)
+      .setHeader("Content-Type", "text/plain; charset=utf-8")
+      .send(errorText || `Google Static Maps failed with ${googleResponse.status}`);
     return;
   }
 
