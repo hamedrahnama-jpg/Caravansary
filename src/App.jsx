@@ -577,58 +577,12 @@ diffuseColor.rgb *= mix(realisticTopSurface, realisticVerticalSurface, realistic
 }
 
 function createRealisticGroundMaterial(baseColor = "#beb9b1") {
-  const material = new THREE.MeshStandardMaterial({
+  return new THREE.MeshStandardMaterial({
     color: baseColor,
     metalness: 0,
-    roughness: 0.98
+    roughness: 0.86,
+    side: THREE.DoubleSide
   });
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        "#include <common>",
-        `#include <common>
-varying vec3 vSoilWorldPosition;`
-      )
-      .replace(
-        "#include <begin_vertex>",
-        `#include <begin_vertex>
-vSoilWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`
-      );
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "#include <common>",
-        `#include <common>
-varying vec3 vSoilWorldPosition;
-
-float soilHash(vec2 p) {
-  return fract(sin(dot(p, vec2(41.23, 289.71))) * 39142.349);
-}
-
-float soilNoise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  float a = soilHash(i);
-  float b = soilHash(i + vec2(1.0, 0.0));
-  float c = soilHash(i + vec2(0.0, 1.0));
-  float d = soilHash(i + vec2(1.0, 1.0));
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-}`
-      )
-      .replace(
-        "#include <color_fragment>",
-        `#include <color_fragment>
-vec2 soilUv = vSoilWorldPosition.xz * 3.2;
-float soilFine = soilNoise(soilUv * 10.0) * 0.13;
-float soilCoarse = soilNoise(soilUv * 2.0) * 0.18;
-float soilRidges = sin((soilUv.x + soilNoise(soilUv * 0.55)) * 16.0) * 0.035;
-vec3 soilA = vec3(0.56, 0.47, 0.36);
-vec3 soilB = vec3(0.72, 0.63, 0.49);
-diffuseColor.rgb *= mix(soilA, soilB, soilCoarse + soilFine) + soilRidges;`
-      );
-  };
-  material.customProgramCacheKey = () => "caravansary-realistic-soil-v1";
-  return material;
 }
 
 function createMaterial(module, style) {
