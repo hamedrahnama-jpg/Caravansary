@@ -4,7 +4,19 @@ create table if not exists public.module_libraries (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.location_models (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  lat double precision not null,
+  lon double precision not null,
+  zoom integer not null default 18,
+  design jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.module_libraries enable row level security;
+alter table public.location_models enable row level security;
 
 drop policy if exists "Public module library read" on public.module_libraries;
 create policy "Public module library read"
@@ -16,6 +28,21 @@ using (true);
 drop policy if exists "Public module library write" on public.module_libraries;
 create policy "Public module library write"
 on public.module_libraries
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "Public location model read" on public.location_models;
+create policy "Public location model read"
+on public.location_models
+for select
+to anon
+using (true);
+
+drop policy if exists "Public location model write" on public.location_models;
+create policy "Public location model write"
+on public.location_models
 for all
 to anon
 using (true)
