@@ -2182,12 +2182,16 @@ export default function App() {
     sun.target.updateMatrixWorld();
     sun.shadow.needsUpdate = true;
 
+    const groundShadowsActive = walkMode || liveShadowPreview || exportShadows;
+    const objectShadowsActive = walkMode || liveShadowPreview || exportObjectShadows;
+    const anyShadowsActive = groundShadowsActive || objectShadowsActive;
+
     if (walkMode) {
       ambient.intensity = 0.08;
       ambient.groundColor.set("#1e1a14");
       sun.intensity = 3.8;
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.needsUpdate = true;
+      renderer.shadowMap.enabled = anyShadowsActive;
+      renderer.shadowMap.needsUpdate = anyShadowsActive;
       sun.shadow.needsUpdate = true;
       setExportEdgesVisible(modelGroup, false);
       markSceneMaterialsForUpdate(modelGroup);
@@ -2195,20 +2199,20 @@ export default function App() {
       ambient.intensity = 1.35;
       ambient.groundColor.set("#8d735d");
       sun.intensity = 3.2;
-      renderer.shadowMap.enabled = liveShadowPreview;
-      renderer.shadowMap.needsUpdate = liveShadowPreview;
+      renderer.shadowMap.enabled = anyShadowsActive;
+      renderer.shadowMap.needsUpdate = anyShadowsActive;
       setExportEdgesVisible(modelGroup, true);
       markSceneMaterialsForUpdate(modelGroup);
     }
     if (floor) {
-      floor.receiveShadow = walkMode || liveShadowPreview;
+      floor.receiveShadow = groundShadowsActive;
       floor.material.needsUpdate = true;
     }
     if (modelGroup) {
       modelGroup.traverse((object) => {
         if (!object.isMesh || object.userData?.isExportEdge || object.userData?.isSectionCap) return;
-        object.castShadow = walkMode || liveShadowPreview;
-        object.receiveShadow = walkMode || liveShadowPreview;
+        object.castShadow = anyShadowsActive;
+        object.receiveShadow = objectShadowsActive;
       });
     }
     requestSceneRender();
@@ -2220,6 +2224,8 @@ export default function App() {
     edgeThickness,
     sunEastWest,
     liveShadowPreview,
+    exportShadows,
+    exportObjectShadows,
     requestSceneRender,
     requestSectionViewportRender
   ]);
