@@ -3310,7 +3310,7 @@ export default function App() {
       }
     });
     scene.traverse((object) => {
-      if ((object.userData?.isStageMarker || object.userData?.isStageMap) && object.visible) {
+      if (object.userData?.isStageMarker && object.visible) {
         hiddenHelpers.push(object);
         object.visible = false;
       }
