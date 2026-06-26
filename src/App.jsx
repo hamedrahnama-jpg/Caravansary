@@ -1505,7 +1505,6 @@ export default function App() {
   const [editingModule, setEditingModule] = useState(DEFAULT_MODULES[0].id);
   const [saveStatus, setSaveStatus] = useState("Loaded");
   const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
-  const mobileSwipeRef = useRef({ side: null, startX: 0, startY: 0 });
 
   const selected = useMemo(
     () => modules.find((module) => module.id === selectedModule) ?? modules[0],
@@ -1527,57 +1526,6 @@ export default function App() {
 
   const requestSectionViewportRender = useCallback(() => {
     requestSectionRenderRef.current();
-  }, []);
-
-  useEffect(() => {
-    const mobileQuery = window.matchMedia("(max-width: 860px)");
-    const edgeSize = 28;
-    const swipeDistance = 72;
-    const verticalTolerance = 90;
-
-    const handlePointerDown = (event) => {
-      if (!mobileQuery.matches || (event.pointerType && event.pointerType !== "touch")) {
-        return;
-      }
-      const { clientX, clientY } = event;
-      const width = window.innerWidth;
-      if (clientX <= edgeSize) {
-        mobileSwipeRef.current = { side: "left", startX: clientX, startY: clientY };
-      } else if (clientX >= width - edgeSize) {
-        mobileSwipeRef.current = { side: "right", startX: clientX, startY: clientY };
-      } else {
-        mobileSwipeRef.current = { side: null, startX: 0, startY: 0 };
-      }
-    };
-
-    const handlePointerUp = (event) => {
-      const swipe = mobileSwipeRef.current;
-      if (!mobileQuery.matches || !swipe.side) {
-        return;
-      }
-      const deltaX = event.clientX - swipe.startX;
-      const deltaY = Math.abs(event.clientY - swipe.startY);
-      mobileSwipeRef.current = { side: null, startX: 0, startY: 0 };
-      if (deltaY > verticalTolerance) {
-        return;
-      }
-      if (swipe.side === "left" && deltaX > swipeDistance) {
-        setMobileModulePanelOpen(true);
-        setMobileMapPanelOpen(false);
-      }
-      if (swipe.side === "right" && deltaX < -swipeDistance) {
-        setMobileMapPanelOpen(true);
-        setMapGuideOpen(true);
-        setMobileModulePanelOpen(false);
-      }
-    };
-
-    window.addEventListener("pointerdown", handlePointerDown, { passive: true });
-    window.addEventListener("pointerup", handlePointerUp, { passive: true });
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("pointerup", handlePointerUp);
-    };
   }, []);
 
   const activeSectionCuts = useMemo(
@@ -5126,9 +5074,28 @@ export default function App() {
           </div>
           <button
             type="button"
+            className="mobile-module-toggle"
+            aria-label={mobileModulePanelOpen ? "Close module list" : "Open module list"}
+            aria-expanded={mobileModulePanelOpen}
+            title="Modules"
+            onClick={() => {
+              setMobileModulePanelOpen((current) => !current);
+              setMobileRibbonOpen(false);
+              setMobileMapPanelOpen(false);
+            }}
+          >
+            <Layers size={19} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
             className="mobile-ribbon-toggle"
             aria-label="Open ribbon menu"
-            onClick={() => setMobileRibbonOpen((current) => !current)}
+            aria-expanded={mobileRibbonOpen}
+            onClick={() => {
+              setMobileRibbonOpen((current) => !current);
+              setMobileModulePanelOpen(false);
+              setMobileMapPanelOpen(false);
+            }}
           >
             {mobileRibbonOpen ? <X size={19} aria-hidden="true" /> : <Menu size={19} aria-hidden="true" />}
           </button>

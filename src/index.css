@@ -49,6 +49,7 @@ button {
 }
 
 .mobile-panel-close,
+.mobile-module-toggle,
 .mobile-ribbon-toggle,
 .mobile-scrim,
 .mobile-only-module-list,
@@ -542,6 +543,7 @@ h1 {
   background: #eef2ef;
 }
 
+.mobile-module-toggle,
 .mobile-ribbon-toggle {
   width: 40px;
   height: 40px;
@@ -926,6 +928,11 @@ h1 {
   }
 
   .mobile-ribbon-toggle {
+    display: grid;
+    flex: 0 0 auto;
+  }
+
+  .mobile-module-toggle {
     display: grid;
     flex: 0 0 auto;
   }
