@@ -1442,6 +1442,7 @@ export default function App() {
   const [walkMode, setWalkMode] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [rotation, setRotation] = useState(0);
+  const [modelScale, setModelScale] = useState(1);
   const [placed, setPlaced] = useState([]);
   const [selectedPlaced, setSelectedPlaced] = useState(null);
   const [selectedPlacedIds, setSelectedPlacedIds] = useState([]);
@@ -2016,13 +2017,11 @@ export default function App() {
   useEffect(() => {
     if (modelGroupRef.current) {
       modelGroupRef.current.rotation.y = THREE.MathUtils.degToRad(rotation);
-      if (stageMapRef.current.mesh) {
-        stageMapRef.current.mesh.rotation.z = THREE.MathUtils.degToRad(rotation);
-      }
+      modelGroupRef.current.scale.setScalar(modelScale);
       requestSceneRender();
       requestSectionViewportRender();
     }
-  }, [rotation, requestSceneRender, requestSectionViewportRender]);
+  }, [modelScale, rotation, requestSceneRender, requestSectionViewportRender]);
 
   useEffect(() => {
     const stageMap = stageMapRef.current.mesh;
@@ -2840,6 +2839,10 @@ export default function App() {
         planEnabled: planSectionEnabled,
         planHeight: planSectionHeight
       },
+      transform: {
+        rotation,
+        scale: modelScale
+      },
       modules: modules.map(getStoredModuleSnapshot),
       placed: placedRef.current.map((item) => ({
         moduleId: item.module.id,
@@ -2937,6 +2940,10 @@ export default function App() {
         setPlanSectionEnabled(Boolean(design.section.planEnabled));
         setPlanSectionHeight(asNumber(design.section.planHeight, 1));
       }
+      if (design.transform) {
+        setRotation(THREE.MathUtils.clamp(asNumber(design.transform.rotation, 0), -180, 180));
+        setModelScale(THREE.MathUtils.clamp(asNumber(design.transform.scale, 1), 0.05, 10));
+      }
     }
 
     const style = STYLES[styleKey];
@@ -2989,7 +2996,8 @@ export default function App() {
       const design = await readJsonFile(file);
       await addDesignToStage(design, { clearCurrent: mode === "open" });
       if (mode === "open") {
-        setRotation(0);
+        setRotation(THREE.MathUtils.clamp(asNumber(design.transform?.rotation, 0), -180, 180));
+        setModelScale(THREE.MathUtils.clamp(asNumber(design.transform?.scale, 1), 0.05, 10));
       }
     } catch {
       setSaveStatus("Open failed");
@@ -3034,7 +3042,6 @@ export default function App() {
       setMapRefreshKey((current) => current + 1);
       setLocationModelName(model.name);
       await restoreDesignSnapshot(model.design);
-      setRotation(0);
       resetCamera();
       setSaveStatus(`Loaded ${model.name}`);
     } catch {
@@ -4474,6 +4481,9 @@ export default function App() {
   const updateWholeModelRotation = (value) => {
     setRotation(THREE.MathUtils.clamp(asNumber(value, 0), -180, 180));
   };
+  const updateWholeModelScale = (value) => {
+    setModelScale(THREE.MathUtils.clamp(asNumber(value, 1), 0.05, 10));
+  };
   const selectedPlacedLabel =
     selectedPlacedIds.length > 1
       ? `${selectedPlacedIds.length} selected`
@@ -4728,6 +4738,30 @@ export default function App() {
                   value={rotation}
                   aria-label="Whole model rotation degrees"
                   onChange={(event) => updateWholeModelRotation(event.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="tool-group">
+              <label htmlFor="model-scale">Whole Model Scale</label>
+              <div className="range-input-row">
+                <input
+                  id="model-scale"
+                  type="range"
+                  min="0.05"
+                  max="10"
+                  step="0.05"
+                  value={modelScale}
+                  onChange={(event) => updateWholeModelScale(event.target.value)}
+                />
+                <input
+                  type="number"
+                  min="0.05"
+                  max="10"
+                  step="0.05"
+                  value={modelScale}
+                  aria-label="Whole model scale"
+                  onChange={(event) => updateWholeModelScale(event.target.value)}
                 />
               </div>
             </div>
@@ -5043,7 +5077,14 @@ export default function App() {
               <button type="button" onClick={resetCamera} title="Reset camera">
                 <Camera size={18} aria-hidden="true" />
               </button>
-              <button type="button" onClick={() => setRotation(0)} title="Reset model rotation">
+              <button
+                type="button"
+                onClick={() => {
+                  setRotation(0);
+                  setModelScale(1);
+                }}
+                title="Reset model transform"
+              >
                 <RotateCcw size={18} aria-hidden="true" />
               </button>
               <button type="button" onClick={clearDesign} title="Clear design">
