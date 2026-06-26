@@ -587,8 +587,10 @@ function createRealisticGroundMaterial(baseColor = "#beb9b1") {
 
 function createMaterial(module, style) {
   if (style.mode === "hidden") {
-    return new THREE.MeshBasicMaterial({
-      color: style.colorOverride
+    return new THREE.MeshStandardMaterial({
+      color: style.colorOverride,
+      metalness: 0,
+      roughness: 0.96
     });
   }
 
@@ -3900,11 +3902,12 @@ export default function App() {
 
       if (grid) grid.visible = false;
       if (exportGroundShadowsActive) {
-        if (floor.material !== currentFloorMaterial) {
-          temporaryFloorMaterial = floor.material;
-          floor.material = currentFloorMaterial;
-        }
-        applyExportGroundMaterial(selectedExportRenderStyle);
+        temporaryFloorMaterial = new THREE.ShadowMaterial({
+          color: "#000000",
+          opacity: 0.28,
+          transparent: true
+        });
+        floor.material = temporaryFloorMaterial;
         floor.visible = true;
         floor.receiveShadow = true;
       } else {
