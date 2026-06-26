@@ -2018,6 +2018,7 @@ export default function App() {
     if (modelGroupRef.current) {
       modelGroupRef.current.rotation.y = THREE.MathUtils.degToRad(rotation);
       modelGroupRef.current.scale.setScalar(modelScale);
+      selectionHelpersRef.current.forEach((helper) => helper.update());
       requestSceneRender();
       requestSectionViewportRender();
     }
@@ -4168,10 +4169,10 @@ export default function App() {
   }
 
   function clearSelectionHelpers() {
-    const modelGroup = modelGroupRef.current;
-    if (!modelGroup) return;
+    const scene = sceneRef.current;
+    if (!scene) return;
     selectionHelpersRef.current.forEach((helper) => {
-      modelGroup.remove(helper);
+      scene.remove(helper);
       helper.geometry.dispose();
       helper.material.dispose();
     });
@@ -4179,13 +4180,13 @@ export default function App() {
   }
 
   function syncSelectionHelpers(ids) {
-    const modelGroup = modelGroupRef.current;
-    if (!modelGroup) return;
+    const scene = sceneRef.current;
+    if (!scene) return;
     const selectedIds = new Set(ids);
 
     selectionHelpersRef.current.forEach((helper, itemId) => {
       if (!selectedIds.has(itemId)) {
-        modelGroup.remove(helper);
+        scene.remove(helper);
         helper.geometry.dispose();
         helper.material.dispose();
         selectionHelpersRef.current.delete(itemId);
@@ -4200,7 +4201,7 @@ export default function App() {
         helper = new THREE.BoxHelper(item.mesh, "#f2c94c");
         helper.material.depthTest = false;
         helper.renderOrder = 20;
-        modelGroup.add(helper);
+        scene.add(helper);
         selectionHelpersRef.current.set(itemId, helper);
       }
       helper.object = item.mesh;
