@@ -12,6 +12,7 @@ import {
   Grid3X3,
   Layers,
   MapPinned,
+  Menu,
   Move3D,
   Maximize2,
   Minimize2,
@@ -22,7 +23,8 @@ import {
   RotateCw,
   Settings,
   Trash2,
-  Upload
+  Upload,
+  X
 } from "lucide-react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -1487,6 +1489,9 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState(null);
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
   const [mapStageVisible, setMapStageVisible] = useState(false);
+  const [mobileModulePanelOpen, setMobileModulePanelOpen] = useState(false);
+  const [mobileRibbonOpen, setMobileRibbonOpen] = useState(false);
+  const [mobileMapPanelOpen, setMobileMapPanelOpen] = useState(false);
   const [mapLat, setMapLat] = useState(35.6892);
   const [mapLon, setMapLon] = useState(51.389);
   const [mapZoom, setMapZoom] = useState(18);
@@ -1500,6 +1505,7 @@ export default function App() {
   const [editingModule, setEditingModule] = useState(DEFAULT_MODULES[0].id);
   const [saveStatus, setSaveStatus] = useState("Loaded");
   const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
+  const mobileSwipeRef = useRef({ side: null, startX: 0, startY: 0 });
 
   const selected = useMemo(
     () => modules.find((module) => module.id === selectedModule) ?? modules[0],
@@ -1521,6 +1527,57 @@ export default function App() {
 
   const requestSectionViewportRender = useCallback(() => {
     requestSectionRenderRef.current();
+  }, []);
+
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(max-width: 860px)");
+    const edgeSize = 28;
+    const swipeDistance = 72;
+    const verticalTolerance = 90;
+
+    const handlePointerDown = (event) => {
+      if (!mobileQuery.matches || (event.pointerType && event.pointerType !== "touch")) {
+        return;
+      }
+      const { clientX, clientY } = event;
+      const width = window.innerWidth;
+      if (clientX <= edgeSize) {
+        mobileSwipeRef.current = { side: "left", startX: clientX, startY: clientY };
+      } else if (clientX >= width - edgeSize) {
+        mobileSwipeRef.current = { side: "right", startX: clientX, startY: clientY };
+      } else {
+        mobileSwipeRef.current = { side: null, startX: 0, startY: 0 };
+      }
+    };
+
+    const handlePointerUp = (event) => {
+      const swipe = mobileSwipeRef.current;
+      if (!mobileQuery.matches || !swipe.side) {
+        return;
+      }
+      const deltaX = event.clientX - swipe.startX;
+      const deltaY = Math.abs(event.clientY - swipe.startY);
+      mobileSwipeRef.current = { side: null, startX: 0, startY: 0 };
+      if (deltaY > verticalTolerance) {
+        return;
+      }
+      if (swipe.side === "left" && deltaX > swipeDistance) {
+        setMobileModulePanelOpen(true);
+        setMobileMapPanelOpen(false);
+      }
+      if (swipe.side === "right" && deltaX < -swipeDistance) {
+        setMobileMapPanelOpen(true);
+        setMapGuideOpen(true);
+        setMobileModulePanelOpen(false);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, { passive: true });
+    window.addEventListener("pointerup", handlePointerUp, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
   }, []);
 
   const activeSectionCuts = useMemo(
@@ -4530,6 +4587,14 @@ export default function App() {
             placedRef.current.find((item) => item.id === selectedPlaced)?.module.name ?? selected.name
           }`
         : selected.name;
+  const modulePanelClass = `module-panel${mobileModulePanelOpen ? " mobile-open" : ""}`;
+  const toolbarClass = `workspace-toolbar${mobileRibbonOpen ? " mobile-open" : ""}`;
+  const mapGuideClass = `map-guide${mobileMapPanelOpen ? " mobile-open" : ""}`;
+  const toggleMapGuide = () => {
+    const nextOpen = !(mapGuideOpen || mobileMapPanelOpen);
+    setMapGuideOpen(nextOpen);
+    setMobileMapPanelOpen(nextOpen);
+  };
 
   return (
     <main className="designer-shell">
@@ -4547,7 +4612,19 @@ export default function App() {
         accept=".json,application/json"
         onChange={(event) => void handleDesignFile(event, "import")}
       />
-      <aside className="module-panel" aria-label="Module library">
+      {(mobileModulePanelOpen || mobileMapPanelOpen || mobileRibbonOpen) ? (
+        <button
+          type="button"
+          className="mobile-scrim"
+          aria-label="Close mobile panels"
+          onClick={() => {
+            setMobileModulePanelOpen(false);
+            setMobileMapPanelOpen(false);
+            setMobileRibbonOpen(false);
+          }}
+        />
+      ) : null}
+      <aside className={modulePanelClass} aria-label="Module library">
         <div className="brand-block">
           <span className="brand-mark">
             <Box size={22} aria-hidden="true" />
@@ -4556,6 +4633,14 @@ export default function App() {
             <h1>Caravansary</h1>
             <p>Modular 3D builder</p>
           </div>
+          <button
+            type="button"
+            className="mobile-panel-close"
+            aria-label="Close module list"
+            onClick={() => setMobileModulePanelOpen(false)}
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
         </div>
 
         <div className="view-tabs" aria-label="Workspace mode">
@@ -5006,15 +5091,47 @@ export default function App() {
             ) : null}
           </div>
         )}
+        <div className="mobile-only-module-list">
+          <div className="palette-header">
+            <Grid3X3 size={18} aria-hidden="true" />
+            <span>{modules.length} Modules</span>
+          </div>
+          <div className="module-grid">
+            {modules.map((module) => (
+              <button
+                key={`mobile-${module.id}`}
+                type="button"
+                className={module.id === selectedModule ? "module-chip active" : "module-chip"}
+                draggable
+                onClick={() => {
+                  addModuleAtCenter(module);
+                  setMobileModulePanelOpen(false);
+                }}
+                onDragStart={(event) => event.dataTransfer.setData("module-id", module.id)}
+              >
+                <img className="module-preview" src={getModuleThumbnail(module)} alt="" draggable="false" />
+                <span>{module.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </aside>
 
       <section className="workspace">
-        <div className="workspace-toolbar">
+        <div className={toolbarClass}>
           <div className="status-block">
             <Move3D size={18} aria-hidden="true" />
             <span>{placed.length} placed</span>
             <strong>{selectedPlacedLabel}</strong>
           </div>
+          <button
+            type="button"
+            className="mobile-ribbon-toggle"
+            aria-label="Open ribbon menu"
+            onClick={() => setMobileRibbonOpen((current) => !current)}
+          >
+            {mobileRibbonOpen ? <X size={19} aria-hidden="true" /> : <Menu size={19} aria-hidden="true" />}
+          </button>
           <div className="toolbar-actions">
             <div className="toolbar-group" aria-label="File">
               <span>File</span>
@@ -5106,9 +5223,9 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setMapGuideOpen((current) => !current)}
+                onClick={toggleMapGuide}
                 title="Map guide"
-                className={mapGuideOpen ? "active" : ""}
+                className={mapGuideOpen || mobileMapPanelOpen ? "active" : ""}
               >
                 <MapPinned size={18} aria-hidden="true" />
               </button>
@@ -5129,6 +5246,259 @@ export default function App() {
                 <Trash2 size={18} aria-hidden="true" />
               </button>
             </div>
+            <div className="mobile-panel-settings">
+              <div className="view-tabs" aria-label="Mobile workspace mode">
+                <button
+                  type="button"
+                  className={activeView === "builder" ? "active" : ""}
+                  onClick={() => setActiveView("builder")}
+                >
+                  <Layers size={16} aria-hidden="true" />
+                  Builder
+                </button>
+                <button
+                  type="button"
+                  className={activeView === "admin" ? "active" : ""}
+                  onClick={() => setActiveView("admin")}
+                >
+                  <Settings size={16} aria-hidden="true" />
+                  Admin
+                </button>
+              </div>
+
+              {activeView === "builder" ? (
+                <>
+                  <div className="tool-group">
+                    <label htmlFor="mobile-export-render-style">Render Style</label>
+                    <select
+                      id="mobile-export-render-style"
+                      value={exportRenderStyle}
+                      onChange={(event) => setExportRenderStyle(event.target.value)}
+                    >
+                      {Object.entries(EXPORT_RENDER_STYLES).map(([key, style]) => (
+                        <option key={key} value={key}>
+                          {style.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="tool-group">
+                    <label htmlFor="mobile-export-mode">Export Type</label>
+                    <select
+                      id="mobile-export-mode"
+                      value={exportMode}
+                      onChange={(event) => setExportMode(event.target.value)}
+                    >
+                      <option value="heritage">Heritage Isometric</option>
+                      <option value="current">Current View Real Color</option>
+                      <option value="views">4 View Solid Sheet</option>
+                      <option value="section">Section Layout</option>
+                      <option value="plan">Plan Layout</option>
+                    </select>
+                  </div>
+
+                  <div className="tool-group">
+                    <label htmlFor="mobile-export-format">Export Format</label>
+                    <select
+                      id="mobile-export-format"
+                      value={exportFormat}
+                      onChange={(event) => setExportFormat(event.target.value)}
+                    >
+                      <option value="png">PNG</option>
+                      <option value="pdf">PDF</option>
+                      <option value="svg">SVG</option>
+                    </select>
+                  </div>
+
+                  <div className="tool-group">
+                    <label htmlFor="mobile-export-quality">Export Quality</label>
+                    <select
+                      id="mobile-export-quality"
+                      value={exportQuality}
+                      onChange={(event) => setExportQuality(event.target.value)}
+                    >
+                      {Object.entries(EXPORT_QUALITY_OPTIONS).map(([key, option]) => (
+                        <option key={key} value={key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field-row render-colors">
+                    <label>
+                      Stage Color
+                      <input
+                        type="color"
+                        value={exportStageColor}
+                        onChange={(event) => setExportStageColor(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      BG Color
+                      <input
+                        type="color"
+                        value={exportBackgroundColor}
+                        onChange={(event) => setExportBackgroundColor(event.target.value)}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="field-row render-colors">
+                    <label>
+                      Edge Color
+                      <input type="color" value={edgeColor} onChange={(event) => setEdgeColor(event.target.value)} />
+                    </label>
+                    <label>
+                      Edge Thick
+                      <input
+                        type="number"
+                        min="0"
+                        max="6"
+                        step="0.25"
+                        value={edgeThickness}
+                        disabled={exportSeamlessSolid}
+                        onChange={(event) => setEdgeThickness(Math.max(0, asNumber(event.target.value, 1)))}
+                      />
+                    </label>
+                  </div>
+
+                  <label className="export-shadow-toggle">
+                    <input
+                      type="checkbox"
+                      checked={exportSeamlessSolid}
+                      onChange={(event) => setExportSeamlessSolid(event.target.checked)}
+                    />
+                    Seamless solid
+                  </label>
+
+                  <label className="export-shadow-toggle">
+                    <input
+                      type="checkbox"
+                      checked={exportObjectShadows}
+                      onChange={(event) => setExportObjectShadows(event.target.checked)}
+                    />
+                    Object shadow
+                  </label>
+
+                  <label className="export-shadow-toggle">
+                    <input
+                      type="checkbox"
+                      checked={exportShadows}
+                      onChange={(event) => setExportShadows(event.target.checked)}
+                    />
+                    Cast shadow
+                  </label>
+
+                  <label className="export-shadow-toggle">
+                    <input
+                      type="checkbox"
+                      checked={sectionXEnabled}
+                      onChange={(event) => setSectionXEnabled(event.target.checked)}
+                    />
+                    X section
+                  </label>
+                  <label>
+                    X section pos
+                    <input
+                      type="number"
+                      step="0.25"
+                      value={sectionXOffset}
+                      onChange={(event) => setSectionXOffset(asNumber(event.target.value, 0))}
+                    />
+                  </label>
+
+                  <label className="export-shadow-toggle">
+                    <input
+                      type="checkbox"
+                      checked={sectionYEnabled}
+                      onChange={(event) => setSectionYEnabled(event.target.checked)}
+                    />
+                    Y section
+                  </label>
+                  <label>
+                    Y section pos
+                    <input
+                      type="number"
+                      step="0.25"
+                      value={sectionYOffset}
+                      onChange={(event) => setSectionYOffset(asNumber(event.target.value, 0))}
+                    />
+                  </label>
+
+                  <label className="export-shadow-toggle">
+                    <input
+                      type="checkbox"
+                      checked={planSectionEnabled}
+                      onChange={(event) => setPlanSectionEnabled(event.target.checked)}
+                    />
+                    Plan cut
+                  </label>
+                  <label>
+                    Plan height
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.25"
+                      value={planSectionHeight}
+                      onChange={(event) => setPlanSectionHeight(asNumber(event.target.value, 1))}
+                    />
+                  </label>
+
+                  <div className="tool-group">
+                    <label htmlFor="mobile-rotation">Whole Model Rotation</label>
+                    <div className="range-input-row">
+                      <input
+                        id="mobile-rotation"
+                        type="range"
+                        min="-180"
+                        max="180"
+                        value={rotation}
+                        onChange={(event) => updateWholeModelRotation(event.target.value)}
+                      />
+                      <input
+                        type="number"
+                        min="-180"
+                        max="180"
+                        step="1"
+                        value={rotation}
+                        aria-label="Whole model rotation degrees"
+                        onChange={(event) => updateWholeModelRotation(event.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="tool-group">
+                    <label htmlFor="mobile-model-scale">Whole Model Scale</label>
+                    <div className="range-input-row">
+                      <input
+                        id="mobile-model-scale"
+                        type="range"
+                        min="0.05"
+                        max="10"
+                        step="0.05"
+                        value={modelScale}
+                        onChange={(event) => updateWholeModelScale(event.target.value)}
+                      />
+                      <input
+                        type="number"
+                        min="0.05"
+                        max="10"
+                        step="0.05"
+                        value={modelScale}
+                        aria-label="Whole model scale"
+                        onChange={(event) => updateWholeModelScale(event.target.value)}
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="mobile-admin-note">
+                  Admin editing is available in the desktop side panel.
+                </div>
+              )}
+            </div>
           </div>
         </div>
         <div
@@ -5141,9 +5511,9 @@ export default function App() {
           onPointerLeave={handlePointerUp}
           onContextMenu={handleContextMenu}
         >
-          {mapGuideOpen ? (
+          {mapGuideOpen || mobileMapPanelOpen ? (
             <div
-              className="map-guide"
+              className={mapGuideClass}
               onPointerDown={(event) => event.stopPropagation()}
               onPointerMove={(event) => event.stopPropagation()}
               onPointerUp={(event) => event.stopPropagation()}
@@ -5151,7 +5521,16 @@ export default function App() {
             >
               <div className="map-guide-header">
                 <span>Map Guide</span>
-                <button type="button" onClick={() => setMapGuideOpen(false)} aria-label="Close map guide">x</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapGuideOpen(false);
+                    setMobileMapPanelOpen(false);
+                  }}
+                  aria-label="Close map guide"
+                >
+                  <X size={15} aria-hidden="true" />
+                </button>
               </div>
               <iframe
                 key={`guide-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
