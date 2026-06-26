@@ -131,6 +131,7 @@ const EXPORT_QUALITY_OPTIONS = {
 };
 const SECTION_LINE_LENGTH = 120;
 const SECTION_LINE_PICK_DISTANCE = 0.45;
+const DEFAULT_SUN_EAST_WEST = -55;
 const DIMENSION_UNITS = {
   stage: { label: "stage", factor: 1 },
   px: { label: "px", factor: 100 }
@@ -146,6 +147,12 @@ function darkenHexColor(hex, amount = 0.4) {
   color.g *= 1 - amount;
   color.b *= 1 - amount;
   return `#${color.getHexString()}`;
+}
+
+function getSunPositionFromEastWest(value) {
+  const eastWest = THREE.MathUtils.clamp(asNumber(value, DEFAULT_SUN_EAST_WEST), -100, 100);
+  const travel = eastWest / 100;
+  return new THREE.Vector3(-travel * 32, 28, 16);
 }
 
 function formatDimensionInput(value, unitKey) {
@@ -1476,6 +1483,8 @@ export default function App() {
   const [sectionYOffset, setSectionYOffset] = useState(0);
   const [planSectionEnabled, setPlanSectionEnabled] = useState(false);
   const [planSectionHeight, setPlanSectionHeight] = useState(1);
+  const [sunEastWest, setSunEastWest] = useState(DEFAULT_SUN_EAST_WEST);
+  const [liveShadowPreview, setLiveShadowPreview] = useState(false);
   const [walkMode, setWalkMode] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [rotation, setRotation] = useState(0);
@@ -1669,7 +1678,8 @@ export default function App() {
     const sun = new THREE.DirectionalLight("#ffffff", 3.2);
     ambientLightRef.current = ambient;
     sunLightRef.current = sun;
-    sun.position.set(18, 28, 16);
+    sun.position.copy(getSunPositionFromEastWest(DEFAULT_SUN_EAST_WEST));
+    sun.target.position.set(0, 0, 0);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.bias = -0.0004;
@@ -1680,7 +1690,7 @@ export default function App() {
     sun.shadow.camera.bottom = -45;
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = 90;
-    scene.add(ambient, sun, modelGroup);
+    scene.add(ambient, sun, sun.target, modelGroup);
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(80, 80),
@@ -2204,13 +2214,18 @@ export default function App() {
     const sun = sunLightRef.current;
     const renderer = rendererRef.current;
     const modelGroup = modelGroupRef.current;
+    const floor = floorRef.current;
     if (!ambient || !sun || !renderer) return;
+
+    sun.position.copy(getSunPositionFromEastWest(sunEastWest));
+    sun.target.position.set(0, 0, 0);
+    sun.target.updateMatrixWorld();
+    sun.shadow.needsUpdate = true;
 
     if (walkMode) {
       ambient.intensity = 0.08;
       ambient.groundColor.set("#1e1a14");
       sun.intensity = 3.8;
-      sun.position.set(22, 32, 12);
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.needsUpdate = true;
       sun.shadow.needsUpdate = true;
@@ -2220,14 +2235,34 @@ export default function App() {
       ambient.intensity = 1.35;
       ambient.groundColor.set("#8d735d");
       sun.intensity = 3.2;
-      sun.position.set(18, 28, 16);
-      renderer.shadowMap.enabled = false;
+      renderer.shadowMap.enabled = liveShadowPreview;
+      renderer.shadowMap.needsUpdate = liveShadowPreview;
       setExportEdgesVisible(modelGroup, true);
       markSceneMaterialsForUpdate(modelGroup);
     }
+    if (floor) {
+      floor.receiveShadow = walkMode || liveShadowPreview;
+      floor.material.needsUpdate = true;
+    }
+    if (modelGroup) {
+      modelGroup.traverse((object) => {
+        if (!object.isMesh || object.userData?.isExportEdge || object.userData?.isSectionCap) return;
+        object.castShadow = walkMode || liveShadowPreview;
+        object.receiveShadow = walkMode || liveShadowPreview;
+      });
+    }
     requestSceneRender();
     requestSectionViewportRender();
-  }, [walkMode, placed.length, edgeColor, edgeThickness, requestSceneRender, requestSectionViewportRender]);
+  }, [
+    walkMode,
+    placed.length,
+    edgeColor,
+    edgeThickness,
+    sunEastWest,
+    liveShadowPreview,
+    requestSceneRender,
+    requestSectionViewportRender
+  ]);
 
   useEffect(() => {
     const controls = controlsRef.current;
@@ -2884,6 +2919,10 @@ export default function App() {
         rotation,
         scale: modelScale
       },
+      environment: {
+        sunEastWest,
+        liveShadowPreview
+      },
       modules: modules.map(getStoredModuleSnapshot),
       placed: placedRef.current.map((item) => ({
         moduleId: item.module.id,
@@ -2985,6 +3024,12 @@ export default function App() {
         setRotation(THREE.MathUtils.clamp(asNumber(design.transform.rotation, 0), -180, 180));
         setModelScale(THREE.MathUtils.clamp(asNumber(design.transform.scale, 1), 0.05, 10));
       }
+      if (design.environment) {
+        setSunEastWest(
+          THREE.MathUtils.clamp(asNumber(design.environment.sunEastWest, DEFAULT_SUN_EAST_WEST), -100, 100)
+        );
+        setLiveShadowPreview(Boolean(design.environment.liveShadowPreview));
+      }
     }
 
     const style = STYLES[styleKey];
@@ -3039,6 +3084,10 @@ export default function App() {
       if (mode === "open") {
         setRotation(THREE.MathUtils.clamp(asNumber(design.transform?.rotation, 0), -180, 180));
         setModelScale(THREE.MathUtils.clamp(asNumber(design.transform?.scale, 1), 0.05, 10));
+        setSunEastWest(
+          THREE.MathUtils.clamp(asNumber(design.environment?.sunEastWest, DEFAULT_SUN_EAST_WEST), -100, 100)
+        );
+        setLiveShadowPreview(Boolean(design.environment?.liveShadowPreview));
       }
     } catch {
       setSaveStatus("Open failed");
@@ -3364,7 +3413,7 @@ export default function App() {
     }
 
     function prepareExportShadows(force = false) {
-      const shouldRenderShadows = exportShadows || exportObjectShadows || force;
+      const shouldRenderShadows = exportShadows || exportObjectShadows || liveShadowPreview || force;
       if (!shouldRenderShadows) return;
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -3393,8 +3442,9 @@ export default function App() {
           object.shadow.needsUpdate = true;
         }
         if (object.isMesh) {
-          object.castShadow = object !== floor && (exportShadows || exportObjectShadows || force);
-          object.receiveShadow = object === floor ? exportShadows || force : exportObjectShadows || force;
+          object.castShadow = object !== floor && (exportShadows || exportObjectShadows || liveShadowPreview || force);
+          object.receiveShadow =
+            object === floor ? exportShadows || liveShadowPreview || force : exportObjectShadows || liveShadowPreview || force;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
@@ -3410,7 +3460,10 @@ export default function App() {
       ambient.intensity = darkExport ? 0.015 : 0.08;
       ambient.groundColor.set(darkExport ? "#050403" : "#1e1a14");
       sun.intensity = darkExport ? 1.85 : 3.8;
-      sun.position.set(22, 32, 12);
+      sun.position.copy(getSunPositionFromEastWest(sunEastWest));
+      sun.target.position.set(0, 0, 0);
+      sun.target.updateMatrixWorld();
+      sun.shadow.needsUpdate = true;
     }
 
     function forceWalkExportStage() {
@@ -3445,7 +3498,7 @@ export default function App() {
 
     function forceWalkExportShadows() {
       const sun = sunLightRef.current;
-      const shouldRenderShadows = exportShadows || exportObjectShadows;
+      const shouldRenderShadows = exportShadows || exportObjectShadows || liveShadowPreview;
       if (!shouldRenderShadows) {
         renderer.shadowMap.enabled = false;
         floor.receiveShadow = false;
@@ -3462,17 +3515,20 @@ export default function App() {
       renderer.shadowMap.needsUpdate = true;
       if (sun?.shadow) {
         sun.castShadow = true;
+        sun.position.copy(getSunPositionFromEastWest(sunEastWest));
+        sun.target.position.set(0, 0, 0);
+        sun.target.updateMatrixWorld();
         sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
         sun.shadow.bias = -0.0002;
         sun.shadow.normalBias = 0.015;
         sun.shadow.radius = 2.5;
         sun.shadow.needsUpdate = true;
       }
-      floor.receiveShadow = exportShadows;
+      floor.receiveShadow = exportShadows || liveShadowPreview;
       modelGroup.traverse((object) => {
         if (object.isMesh) {
-          object.castShadow = object !== floor && (exportShadows || exportObjectShadows);
-          object.receiveShadow = exportObjectShadows;
+          object.castShadow = object !== floor && (exportShadows || exportObjectShadows || liveShadowPreview);
+          object.receiveShadow = exportObjectShadows || liveShadowPreview;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
@@ -3741,8 +3797,8 @@ export default function App() {
       activeCamera.aspect = exportWidth / exportHeight;
       activeCamera.updateProjectionMatrix();
     }
-    renderer.shadowMap.enabled = exportShadows || exportObjectShadows;
-    if (exportShadows || exportObjectShadows) {
+    renderer.shadowMap.enabled = exportShadows || exportObjectShadows || liveShadowPreview;
+    if (exportShadows || exportObjectShadows || liveShadowPreview) {
       renderer.shadowMap.needsUpdate = true;
     }
 
@@ -3763,12 +3819,12 @@ export default function App() {
         }
         renderer.compile(scene, controls.object);
         renderer.render(scene, controls.object);
-      } else if (exportShadows || exportObjectShadows) {
+      } else if (exportShadows || exportObjectShadows || liveShadowPreview) {
         applyRenderStyle(selectedExportRenderStyle);
         if (grid) grid.visible = false;
         applyExportGroundMaterial(selectedExportRenderStyle);
         floor.visible = true;
-        floor.receiveShadow = exportShadows;
+        floor.receiveShadow = exportShadows || liveShadowPreview;
         prepareExportShadows();
         renderer.render(scene, controls.object);
       } else {
@@ -4522,6 +4578,10 @@ export default function App() {
   const updateWholeModelScale = (value) => {
     setModelScale(THREE.MathUtils.clamp(asNumber(value, 1), 0.05, 10));
   };
+  const updateSunEastWest = (value) => {
+    setSunEastWest(THREE.MathUtils.clamp(asNumber(value, DEFAULT_SUN_EAST_WEST), -100, 100));
+    setLiveShadowPreview(true);
+  };
   const selectedPlacedLabel =
     selectedPlacedIds.length > 1
       ? `${selectedPlacedIds.length} selected`
@@ -4800,6 +4860,30 @@ export default function App() {
                   value={modelScale}
                   aria-label="Whole model scale"
                   onChange={(event) => updateWholeModelScale(event.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="tool-group">
+              <label htmlFor="sun-east-west">Sun East / West</label>
+              <div className="range-input-row">
+                <input
+                  id="sun-east-west"
+                  type="range"
+                  min="-100"
+                  max="100"
+                  step="1"
+                  value={sunEastWest}
+                  onChange={(event) => updateSunEastWest(event.target.value)}
+                />
+                <input
+                  type="number"
+                  min="-100"
+                  max="100"
+                  step="1"
+                  value={sunEastWest}
+                  aria-label="Sun east west position"
+                  onChange={(event) => updateSunEastWest(event.target.value)}
                 />
               </div>
             </div>
