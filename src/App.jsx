@@ -1707,7 +1707,10 @@ export default function App() {
     gridRef.current = grid;
     scene.add(grid);
 
-    const stageMapMaterial = new THREE.MeshBasicMaterial({
+    const stageMapMaterial = new THREE.MeshStandardMaterial({
+      color: "#ffffff",
+      metalness: 0,
+      roughness: 1,
       transparent: true,
       opacity: 0.58,
       depthTest: true,
@@ -1721,6 +1724,7 @@ export default function App() {
     stageMap.rotation.x = -Math.PI / 2;
     stageMap.position.y = 0.015;
     stageMap.visible = false;
+    stageMap.receiveShadow = true;
     stageMap.renderOrder = 2;
     stageMap.userData.isStageMap = true;
     stageMapRef.current = { mesh: stageMap, material: stageMapMaterial, texture: null };
@@ -3442,9 +3446,12 @@ export default function App() {
           object.shadow.needsUpdate = true;
         }
         if (object.isMesh) {
-          object.castShadow = object !== floor && (exportShadows || exportObjectShadows || liveShadowPreview || force);
-          object.receiveShadow =
-            object === floor ? exportShadows || liveShadowPreview || force : exportObjectShadows || liveShadowPreview || force;
+          const isGroundReceiver = object === floor || object.userData?.isStageMap;
+          object.castShadow =
+            !isGroundReceiver && (exportShadows || exportObjectShadows || liveShadowPreview || force);
+          object.receiveShadow = isGroundReceiver
+            ? exportShadows || liveShadowPreview || force
+            : exportObjectShadows || liveShadowPreview || force;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
