@@ -3312,6 +3312,10 @@ export default function App() {
       formatMaxSide / Math.max(currentSize.x, currentSize.y, 1)
     );
     const exportSuffix = `${exportScale.toFixed(2).replace(/\.?0+$/, "")}x`;
+    const buildShadowActive = currentShadowEnabled || liveShadowPreview || walkMode;
+    const exportGroundShadowsActive = exportShadows || buildShadowActive;
+    const exportObjectShadowsActive = exportObjectShadows || buildShadowActive;
+    const exportAnyShadowsActive = exportGroundShadowsActive || exportObjectShadowsActive;
     const hiddenHelpers = [];
     const shadowSettings = [];
     let temporaryFloorMaterial = null;
@@ -3366,7 +3370,12 @@ export default function App() {
       if (selectedExportRenderStyle.mode === "realistic") {
         return createRealisticGroundMaterial(exportStageColor);
       }
-      return new THREE.MeshBasicMaterial({ color: exportStageColor, side: THREE.DoubleSide });
+      return new THREE.MeshStandardMaterial({
+        color: exportStageColor,
+        metalness: 0,
+        roughness: 0.86,
+        side: THREE.DoubleSide
+      });
     }
 
     function forEachMaterial(material, callback) {
@@ -3378,7 +3387,7 @@ export default function App() {
     }
 
     function prepareExportShadows(force = false) {
-      const shouldRenderShadows = exportShadows || exportObjectShadows || liveShadowPreview || force;
+      const shouldRenderShadows = exportAnyShadowsActive || force;
       if (!shouldRenderShadows) return;
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -3407,12 +3416,16 @@ export default function App() {
           object.shadow.needsUpdate = true;
         }
         if (object.isMesh) {
-          const isGroundReceiver = object === floor || object.userData?.isStageMap;
+          const isGroundReceiver =
+            object === floor ||
+            object.userData?.isStageMap ||
+            object.userData?.isExportGroundBackdrop ||
+            object.userData?.isSectionBackdrop;
           object.castShadow =
-            !isGroundReceiver && (exportShadows || exportObjectShadows || liveShadowPreview || force);
+            !isGroundReceiver && (exportAnyShadowsActive || force);
           object.receiveShadow = isGroundReceiver
-            ? exportShadows || liveShadowPreview || force
-            : exportObjectShadows || liveShadowPreview || force;
+            ? exportGroundShadowsActive || force
+            : exportObjectShadowsActive || force;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
@@ -3466,7 +3479,7 @@ export default function App() {
 
     function forceWalkExportShadows() {
       const sun = sunLightRef.current;
-      const shouldRenderShadows = exportShadows || exportObjectShadows || liveShadowPreview;
+      const shouldRenderShadows = exportAnyShadowsActive;
       if (!shouldRenderShadows) {
         renderer.shadowMap.enabled = false;
         floor.receiveShadow = false;
@@ -3492,11 +3505,11 @@ export default function App() {
         sun.shadow.radius = 2.5;
         sun.shadow.needsUpdate = true;
       }
-      floor.receiveShadow = exportShadows || liveShadowPreview;
+      floor.receiveShadow = exportGroundShadowsActive;
       modelGroup.traverse((object) => {
         if (object.isMesh) {
-          object.castShadow = object !== floor && (exportShadows || exportObjectShadows || liveShadowPreview);
-          object.receiveShadow = exportObjectShadows || liveShadowPreview;
+          object.castShadow = object !== floor && exportAnyShadowsActive;
+          object.receiveShadow = exportObjectShadowsActive;
           forEachMaterial(object.material, (material) => {
             material.needsUpdate = true;
           });
@@ -3779,8 +3792,8 @@ export default function App() {
       activeCamera.aspect = exportWidth / exportHeight;
       activeCamera.updateProjectionMatrix();
     }
-    renderer.shadowMap.enabled = exportShadows || exportObjectShadows || liveShadowPreview;
-    if (exportShadows || exportObjectShadows || liveShadowPreview) {
+    renderer.shadowMap.enabled = exportAnyShadowsActive;
+    if (exportAnyShadowsActive) {
       renderer.shadowMap.needsUpdate = true;
     }
 
@@ -3801,12 +3814,12 @@ export default function App() {
         }
         renderer.compile(scene, controls.object);
         renderer.render(scene, controls.object);
-      } else if (exportShadows || exportObjectShadows || liveShadowPreview) {
+      } else if (exportAnyShadowsActive) {
         applyRenderStyle(selectedExportRenderStyle);
         if (grid) grid.visible = false;
         applyExportGroundMaterial(selectedExportRenderStyle);
         floor.visible = true;
-        floor.receiveShadow = exportShadows || liveShadowPreview;
+        floor.receiveShadow = exportGroundShadowsActive;
         prepareExportShadows();
         renderer.render(scene, controls.object);
       } else {
@@ -3869,6 +3882,8 @@ export default function App() {
             )
             .setPosition(new THREE.Vector3(center.x - maxSize * 1.6, modelBottom - height / 2, center.z));
         }
+        backdrop.receiveShadow = exportGroundShadowsActive;
+        backdrop.userData.isExportGroundBackdrop = true;
         backdrop.renderOrder = -10;
         scene.add(backdrop);
         viewGroundBackdrops.push(backdrop);
@@ -3884,7 +3899,7 @@ export default function App() {
       }
 
       if (grid) grid.visible = false;
-      if (exportShadows) {
+      if (exportGroundShadowsActive) {
         temporaryFloorMaterial = new THREE.ShadowMaterial({
           color: "#000000",
           opacity: 0.28,
@@ -3905,7 +3920,7 @@ export default function App() {
       panels.forEach((panel) => {
         clearViewGroundBackdrops();
         applyRenderStyle(panel.style, { updateFloor: false });
-        floor.visible = exportShadows;
+        floor.visible = exportGroundShadowsActive;
         addViewGroundBackdrop(panel.view);
         renderer.setViewport(panel.x, panel.y, panelWidth, panelHeight);
         renderer.setScissor(panel.x, panel.y, panelWidth, panelHeight);
@@ -3984,6 +3999,7 @@ export default function App() {
         const backdrop = new THREE.Mesh(geometry, material);
         backdrop.matrixAutoUpdate = false;
         backdrop.matrix.makeBasis(direction, up, normal).setPosition(planePoint);
+        backdrop.receiveShadow = exportGroundShadowsActive;
         backdrop.renderOrder = -10;
         backdrop.userData.isSectionBackdrop = true;
         scene.add(backdrop);
