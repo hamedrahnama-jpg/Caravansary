@@ -5,7 +5,7 @@ create table if not exists public.module_libraries (
 );
 
 create table if not exists public.location_models (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key default gen_random_uuid()::text,
   name text not null,
   lat double precision not null,
   lon double precision not null,
@@ -14,6 +14,10 @@ create table if not exists public.location_models (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.location_models alter column id drop default;
+alter table public.location_models alter column id type text using id::text;
+alter table public.location_models alter column id set default gen_random_uuid()::text;
 
 alter table public.module_libraries enable row level security;
 alter table public.location_models enable row level security;

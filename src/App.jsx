@@ -123,7 +123,6 @@ const MODULE_STORAGE_KEY = "caravansary.modules.v1";
 const MODEL_LOCATIONS_STORAGE_KEY = "caravansary.locationModels.v1";
 const MODULE_DB_NAME = "caravansary-module-assets";
 const MODULE_DB_STORE = "assets";
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 const EDGE_SNAP_DISTANCE = 0.55;
 const EXPORT_QUALITY_OPTIONS = {
   standard: { label: "Standard", scale: 3, maxSide: 6000, shadowMapSize: 4096 },
@@ -437,19 +436,15 @@ function getGoogleSatelliteUrl(lat, lon, zoom) {
 }
 
 function getGoogleStaticMapUrl(lat, lon, zoom) {
-  if (!GOOGLE_MAPS_API_KEY) return null;
   const safeLat = asNumber(lat, 0);
   const safeLon = asNumber(lon, 0);
   const safeZoom = Math.round(THREE.MathUtils.clamp(asNumber(zoom, 18), 1, 21));
   const params = new URLSearchParams({
-    center: `${safeLat},${safeLon}`,
-    zoom: String(safeZoom),
-    size: "640x640",
-    scale: "2",
-    maptype: "satellite",
-    key: GOOGLE_MAPS_API_KEY
+    lat: String(safeLat),
+    lon: String(safeLon),
+    zoom: String(safeZoom)
   });
-  return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
+  return `/api/static-map?${params.toString()}`;
 }
 
 function downloadBlob(filename, blob) {
@@ -2038,13 +2033,6 @@ export default function App() {
     }
 
     const textureUrl = getGoogleStaticMapUrl(mapLat, mapLon, mapZoom);
-    if (!textureUrl) {
-      stageMap.visible = false;
-      setSaveStatus("Stage map needs Google API key");
-      requestSceneRender();
-      return undefined;
-    }
-
     let cancelled = false;
     const textureLoader = new THREE.TextureLoader();
     textureLoader.setCrossOrigin("anonymous");
