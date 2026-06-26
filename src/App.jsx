@@ -3314,6 +3314,7 @@ export default function App() {
     const exportSuffix = `${exportScale.toFixed(2).replace(/\.?0+$/, "")}x`;
     const hiddenHelpers = [];
     const shadowSettings = [];
+    const temporaryGroundShadows = [];
     let temporaryFloorMaterial = null;
     let exportShadowQualityApplied = false;
 
@@ -3414,10 +3415,67 @@ export default function App() {
       fitExportShadowCamera(style);
     }
 
+    function createSoftShadowTexture() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 256;
+      const context = canvas.getContext("2d");
+      const gradient = context.createRadialGradient(128, 128, 20, 128, 128, 128);
+      gradient.addColorStop(0, "rgba(0, 0, 0, 0.58)");
+      gradient.addColorStop(0.58, "rgba(0, 0, 0, 0.26)");
+      gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 256, 256);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      return texture;
+    }
+
+    function addExportGroundShadowProjection(style) {
+      const shouldRenderShadows = exportShadows || liveShadowPreview;
+      if (!shouldRenderShadows || style.mode !== "realistic" || temporaryGroundShadows.length > 0) return;
+
+      const shadowTexture = createSoftShadowTexture();
+      const sunVector = getSunPositionFromEastWest(sunEastWest);
+      const horizontalSun = new THREE.Vector2(sunVector.x, sunVector.z);
+      if (horizontalSun.lengthSq() < 0.001) horizontalSun.set(1, 0);
+      horizontalSun.normalize();
+
+      placedRef.current.forEach((item) => {
+        const box = getObjectBox(item.mesh);
+        if (box.isEmpty()) return;
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const shadowLength = Math.max(0.9, size.y * 1.25);
+        const shadowWidth = Math.max(size.x, size.z) * 1.35;
+        const shadowDepth = Math.max(size.x, size.z) * 0.72 + shadowLength;
+        const offset = horizontalSun.clone().multiplyScalar(-shadowLength * 0.42);
+        const material = new THREE.MeshBasicMaterial({
+          map: shadowTexture,
+          color: "#24180b",
+          transparent: true,
+          opacity: 0.34,
+          depthTest: true,
+          depthWrite: false,
+          side: THREE.DoubleSide
+        });
+        const shadow = new THREE.Mesh(new THREE.PlaneGeometry(shadowWidth, shadowDepth), material);
+        shadow.rotation.x = -Math.PI / 2;
+        shadow.rotation.z = Math.atan2(horizontalSun.y, horizontalSun.x) + Math.PI / 2;
+        shadow.position.set(center.x + offset.x, 0.055, center.z + offset.y);
+        shadow.renderOrder = 3;
+        shadow.userData.isExportGroundShadow = true;
+        scene.add(shadow);
+        temporaryGroundShadows.push(shadow);
+      });
+    }
+
     function prepareExportShadows(force = false) {
       const shouldRenderShadows = exportShadows || exportObjectShadows || liveShadowPreview || force;
       if (!shouldRenderShadows) return;
       applyExportLighting(selectedExportRenderStyle);
+      addExportGroundShadowProjection(selectedExportRenderStyle);
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.shadowMap.needsUpdate = true;
@@ -3566,6 +3624,13 @@ export default function App() {
       floor.material.color.copy(currentFloorColor);
       floor.visible = currentFloorVisible;
       if (grid) grid.visible = currentGridVisible;
+      temporaryGroundShadows.forEach((shadow) => {
+        scene.remove(shadow);
+        shadow.geometry?.dispose();
+        shadow.material?.map?.dispose();
+        shadow.material?.dispose();
+      });
+      temporaryGroundShadows.length = 0;
       hiddenHelpers.forEach((helper) => {
         helper.visible = true;
       });
