@@ -1553,7 +1553,10 @@ export default function App() {
       }
     }
 
-    hydrateLocationModels().catch(() => setSaveStatus("Map models failed"));
+    hydrateLocationModels().catch(() => {
+      setLocationModels(loadLocalLocationModels());
+      setSaveStatus("Map models local only");
+    });
 
     return () => {
       cancelled = true;
@@ -2056,7 +2059,7 @@ export default function App() {
       () => {
         if (!cancelled) {
           stageMap.visible = false;
-          setSaveStatus("Stage map failed");
+          setSaveStatus("Stage map API blocked");
           requestSceneRender();
         }
       }
@@ -3016,7 +3019,10 @@ export default function App() {
       saveLocalLocationModels(nextModels);
       setSaveStatus(isSupabaseConfigured ? "Location model saved to cloud" : "Location model saved");
     } catch {
-      setSaveStatus("Location save failed");
+      const nextModels = [model, ...locationModels.filter((item) => item.id !== model.id)];
+      setLocationModels(nextModels);
+      saveLocalLocationModels(nextModels);
+      setSaveStatus("Location saved locally");
     }
   }
 
@@ -3069,7 +3075,18 @@ export default function App() {
       setMapRefreshKey((current) => current + 1);
       setSaveStatus(isSupabaseConfigured ? "Location updated in cloud" : "Location updated");
     } catch {
-      setSaveStatus("Location update failed");
+      const nextModel = {
+        ...model,
+        name: model.name.trim() || "Untitled model",
+        lat: asNumber(model.lat, 0),
+        lon: asNumber(model.lon, 0),
+        zoom: Math.round(THREE.MathUtils.clamp(asNumber(model.zoom, 18), 1, 21)),
+        updated_at: new Date().toISOString()
+      };
+      const nextModels = locationModels.map((item) => (item.id === nextModel.id ? nextModel : item));
+      setLocationModels(nextModels);
+      saveLocalLocationModels(nextModels);
+      setSaveStatus("Location updated locally");
     }
   }
 
@@ -3083,7 +3100,10 @@ export default function App() {
       saveLocalLocationModels(nextModels);
       setSaveStatus("Location deleted");
     } catch {
-      setSaveStatus("Location delete failed");
+      const nextModels = locationModels.filter((model) => model.id !== modelId);
+      setLocationModels(nextModels);
+      saveLocalLocationModels(nextModels);
+      setSaveStatus("Location deleted locally");
     }
   }
 
