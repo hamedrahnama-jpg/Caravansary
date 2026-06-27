@@ -668,7 +668,6 @@ h1 {
 
 .map-tag-card {
   display: grid;
-  grid-template-rows: 180px auto;
   min-height: 0;
   margin: 8px;
   overflow: hidden;
@@ -700,10 +699,6 @@ h1 {
   min-height: 0;
   overflow: auto;
   padding: 0 8px 8px;
-}
-
-.mobile-tag-controls {
-  display: none;
 }
 
 .map-guide-controls label {
@@ -1176,20 +1171,6 @@ h1 {
     gap: 12px;
   }
 
-  .view-tabs {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-
-  .view-tabs button {
-    justify-content: flex-start;
-    width: 100%;
-    min-height: 46px;
-    padding: 0 14px;
-    font-size: 0.95rem;
-    font-weight: 800;
-  }
-
   .workspace {
     height: 100dvh;
   }
@@ -1376,22 +1357,13 @@ h1 {
   }
 
   .map-tag-card {
-    grid-template-rows: minmax(0, 1fr);
     min-height: 0;
     margin: 7px;
-  }
-
-  .desktop-tag-controls {
-    display: none;
   }
 
   .map-list-scroll {
     gap: 6px;
     padding: 0 7px 12px;
-  }
-
-  .mobile-tag-controls {
-    display: grid;
   }
 
   .map-guide-controls {
