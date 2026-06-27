@@ -121,7 +121,6 @@ const EXPORT_RENDER_STYLES = {
 
 const loader = new GLTFLoader();
 const assetCache = new Map();
-let googleMapsScriptPromise = null;
 const MODULE_STORAGE_KEY = "caravansary.modules.v1";
 const MODEL_LOCATIONS_STORAGE_KEY = "caravansary.locationModels.v1";
 const MODULE_DB_NAME = "caravansary-module-assets";
@@ -452,41 +451,6 @@ function getGoogleSatelliteUrl(lat, lon, zoom) {
   const safeLon = asNumber(lon, 0);
   const safeZoom = Math.round(THREE.MathUtils.clamp(asNumber(zoom, 18), 1, 21));
   return `https://maps.google.com/maps?q=${safeLat},${safeLon}&z=${safeZoom}&t=k&output=embed`;
-}
-
-async function getGoogleMapsApiKey() {
-  const envKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  if (envKey) return envKey;
-  const response = await fetch("/api/maps-key");
-  if (!response.ok) throw new Error("Google Maps key is unavailable");
-  const data = await response.json();
-  if (!data?.key) throw new Error("Google Maps key is unavailable");
-  return data.key;
-}
-
-async function loadGoogleMapsApi() {
-  if (window.google?.maps) return window.google.maps;
-  if (!googleMapsScriptPromise) {
-    googleMapsScriptPromise = getGoogleMapsApiKey().then(
-      (apiKey) =>
-        new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src = `https://maps.googleapis.com/maps/api/js?${new URLSearchParams({ key: apiKey }).toString()}`;
-          script.async = true;
-          script.defer = true;
-          script.onload = () => {
-            if (window.google?.maps) {
-              resolve(window.google.maps);
-            } else {
-              reject(new Error("Google Maps failed to initialize"));
-            }
-          };
-          script.onerror = () => reject(new Error("Google Maps failed to load"));
-          document.head.appendChild(script);
-        })
-    );
-  }
-  return googleMapsScriptPromise;
 }
 
 function getGoogleStaticMapUrl(lat, lon, zoom) {
@@ -1717,7 +1681,6 @@ export default function App() {
   const previewCanvasRef = useRef(null);
   const mapOverviewPreviewCanvasRef = useRef(null);
   const mapOverviewBodyRef = useRef(null);
-  const mapPickerRef = useRef(null);
   const sectionCanvasRef = useRef(null);
   const sceneRef = useRef(null);
   const previewSceneRef = useRef(null);
@@ -1751,9 +1714,6 @@ export default function App() {
   const floorRef = useRef(null);
   const gridRef = useRef(null);
   const stageMapRef = useRef({ mesh: null, material: null, texture: null });
-  const mapPickerInstanceRef = useRef(null);
-  const mapPickerMarkerRef = useRef(null);
-  const mapPickerInitialRef = useRef({ lat: 35.6892, lon: 51.389, zoom: 18 });
   const dragRef = useRef({
     active: false,
     object: null,
@@ -1852,10 +1812,6 @@ export default function App() {
       })),
     [locationModels, mapOverviewBounds, mapOverviewSize]
   );
-
-  useEffect(() => {
-    mapPickerInitialRef.current = { lat: mapLat, lon: mapLon, zoom: mapZoom };
-  }, [mapLat, mapLon, mapZoom]);
 
   const requestSceneRender = useCallback(() => {
     requestRenderRef.current();
@@ -2009,79 +1965,6 @@ export default function App() {
     observer.observe(element);
     return () => observer.disconnect();
   }, [mapOverviewOpen]);
-
-  useEffect(() => {
-    const container = mapPickerRef.current;
-    if (!mapPickerOpen || !container) return undefined;
-
-    let cancelled = false;
-    let idleListener = null;
-    setMapPickerLoading(true);
-    setMapPickerError("");
-
-    async function initializePicker() {
-      try {
-        const googleMaps = await loadGoogleMapsApi();
-        if (cancelled) return;
-        const initial = mapPickerInitialRef.current;
-
-        const map =
-          mapPickerInstanceRef.current ??
-          new googleMaps.Map(container, {
-            center: { lat: asNumber(initial.lat, 0), lng: asNumber(initial.lon, 0) },
-            zoom: Math.round(THREE.MathUtils.clamp(asNumber(initial.zoom, 18), 1, 21)),
-            mapTypeId: "satellite",
-            fullscreenControl: false,
-            mapTypeControl: true,
-            streetViewControl: false
-          });
-
-        mapPickerInstanceRef.current = map;
-        map.setCenter({ lat: asNumber(initial.lat, 0), lng: asNumber(initial.lon, 0) });
-        map.setZoom(Math.round(THREE.MathUtils.clamp(asNumber(initial.zoom, 18), 1, 21)));
-
-        const marker =
-          mapPickerMarkerRef.current ??
-          new googleMaps.Marker({
-            map,
-            clickable: false
-          });
-        mapPickerMarkerRef.current = marker;
-        marker.setMap(map);
-        marker.setPosition(map.getCenter());
-
-        idleListener = map.addListener("idle", () => {
-          const center = map.getCenter();
-          if (!center) return;
-          marker.setPosition(center);
-          setMapLat(Number(center.lat().toFixed(6)));
-          setMapLon(Number(center.lng().toFixed(6)));
-          setMapZoom(Math.round(THREE.MathUtils.clamp(map.getZoom() ?? 18, 1, 21)));
-        });
-
-        setMapPickerLoading(false);
-      } catch (error) {
-        if (!cancelled) {
-          setMapPickerLoading(false);
-          setMapPickerError(error?.message || "Google Maps could not load.");
-        }
-      }
-    }
-
-    void initializePicker();
-
-    return () => {
-      cancelled = true;
-      if (idleListener) {
-        idleListener.remove();
-      }
-      if (mapPickerMarkerRef.current) {
-        mapPickerMarkerRef.current.setMap(null);
-      }
-      mapPickerMarkerRef.current = null;
-      mapPickerInstanceRef.current = null;
-    };
-  }, [mapPickerOpen]);
 
   useEffect(() => {
     const canvas = mapOverviewPreviewCanvasRef.current;
@@ -3431,6 +3314,29 @@ export default function App() {
     } catch {
       setSaveStatus("Open failed");
     }
+  }
+
+  function useBrowserLocationForTag() {
+    if (!navigator.geolocation) {
+      setMapPickerError("Browser location is not available.");
+      return;
+    }
+    setMapPickerError("");
+    setMapPickerLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setMapLat(Number(position.coords.latitude.toFixed(6)));
+        setMapLon(Number(position.coords.longitude.toFixed(6)));
+        setMapZoom((current) => Math.max(18, Math.round(THREE.MathUtils.clamp(asNumber(current, 18), 1, 21))));
+        setMapRefreshKey((current) => current + 1);
+        setMapPickerLoading(false);
+      },
+      (error) => {
+        setMapPickerLoading(false);
+        setMapPickerError(error?.message || "Could not read browser location.");
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 15000 }
+    );
   }
 
   async function saveCurrentModelToLocation() {
@@ -6083,10 +5989,13 @@ export default function App() {
                 <div>
                   <strong>Pick Tag Location</strong>
                   <span>
-                    {Number(asNumber(mapLat, 0)).toFixed(6)}, {Number(asNumber(mapLon, 0)).toFixed(6)} · z
+                    {Number(asNumber(mapLat, 0)).toFixed(6)}, {Number(asNumber(mapLon, 0)).toFixed(6)} - z
                     {Math.round(asNumber(mapZoom, 18))}
                   </span>
                 </div>
+                <button type="button" onClick={useBrowserLocationForTag}>
+                  Use my location
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -6101,11 +6010,18 @@ export default function App() {
                 </button>
               </div>
               <div className="map-picker-body">
-                <div ref={mapPickerRef} className="map-picker-canvas" />
+                <iframe
+                  key={`picker-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
+                  className="map-picker-frame"
+                  title="Fullscreen Google map"
+                  src={getGoogleSatelliteUrl(mapLat, mapLon, mapZoom)}
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
                 <div className="map-picker-crosshair">
                   <Crosshair size={28} aria-hidden="true" />
                 </div>
-                {mapPickerLoading ? <div className="map-picker-status">Loading Google Map</div> : null}
+                {mapPickerLoading ? <div className="map-picker-status">Reading browser location</div> : null}
                 {mapPickerError ? <div className="map-picker-status error">{mapPickerError}</div> : null}
               </div>
             </div>
