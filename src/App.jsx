@@ -121,7 +121,6 @@ const EXPORT_RENDER_STYLES = {
 
 const loader = new GLTFLoader();
 const assetCache = new Map();
-let googleMapsScriptPromise = null;
 const MODULE_STORAGE_KEY = "caravansary.modules.v1";
 const MODEL_LOCATIONS_STORAGE_KEY = "caravansary.locationModels.v1";
 const MODULE_DB_NAME = "caravansary-module-assets";
@@ -452,42 +451,6 @@ function getGoogleSatelliteUrl(lat, lon, zoom) {
   return `https://maps.google.com/maps?q=${safeLat},${safeLon}&z=${safeZoom}&t=k&output=embed`;
 }
 
-function getGoogleDefaultMapUrl(lat, lon, zoom) {
-  const safeLat = asNumber(lat, 0);
-  const safeLon = asNumber(lon, 0);
-  const safeZoom = Math.round(THREE.MathUtils.clamp(asNumber(zoom, 5), 1, 21));
-  return `https://maps.google.com/maps?q=${safeLat},${safeLon}&z=${safeZoom}&output=embed`;
-}
-
-async function getGoogleMapsApiKey() {
-  const envKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  if (envKey) return envKey;
-  const response = await fetch("/api/maps-key");
-  if (!response.ok) throw new Error("Missing Google Maps key");
-  const data = await response.json();
-  if (!data?.key) throw new Error("Missing Google Maps key");
-  return data.key;
-}
-
-async function loadGoogleMapsApi() {
-  if (window.google?.maps) return window.google.maps;
-  if (!googleMapsScriptPromise) {
-    googleMapsScriptPromise = getGoogleMapsApiKey().then(
-      (apiKey) =>
-        new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src = `https://maps.googleapis.com/maps/api/js?${new URLSearchParams({ key: apiKey }).toString()}`;
-          script.async = true;
-          script.defer = true;
-          script.onload = () => resolve(window.google.maps);
-          script.onerror = () => reject(new Error("Google Maps failed to load"));
-          document.head.appendChild(script);
-        })
-    );
-  }
-  return googleMapsScriptPromise;
-}
-
 function getGoogleStaticMapUrl(lat, lon, zoom) {
   const safeLat = asNumber(lat, 0);
   const safeLon = asNumber(lon, 0);
@@ -500,11 +463,16 @@ function getGoogleStaticMapUrl(lat, lon, zoom) {
   return `/api/static-map?${params.toString()}`;
 }
 
-function getGoogleOverviewMapUrl(models) {
+function getGoogleOverviewMapUrl(models, bounds) {
   const points = models
     .map((model) => `${asNumber(model.lat, 0)},${asNumber(model.lon, 0)}`)
     .join("|");
-  return `/api/overview-map?${new URLSearchParams({ points }).toString()}`;
+  return `/api/overview-map?${new URLSearchParams({
+    points,
+    lat: String(bounds.centerLat),
+    lon: String(bounds.centerLon),
+    zoom: String(bounds.zoom)
+  }).toString()}`;
 }
 
 function getTaggedMapBounds(models) {
@@ -544,6 +512,26 @@ function getTaggedMapBounds(models) {
     centerLat: (minLat + maxLat) / 2,
     centerLon: (minLon + maxLon) / 2,
     zoom
+  };
+}
+
+function getMercatorPoint(lat, lon) {
+  const sinLat = Math.sin(THREE.MathUtils.degToRad(THREE.MathUtils.clamp(lat, -85, 85)));
+  return {
+    x: 256 * (0.5 + lon / 360),
+    y: 256 * (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI))
+  };
+}
+
+function getMapOverviewPinStyle(model, bounds) {
+  const zoomScale = 2 ** Math.round(THREE.MathUtils.clamp(asNumber(bounds.zoom, 5), 1, 21));
+  const center = getMercatorPoint(bounds.centerLat, bounds.centerLon);
+  const point = getMercatorPoint(asNumber(model.lat, 0), asNumber(model.lon, 0));
+  const x = (point.x - center.x) * zoomScale + 320;
+  const y = (point.y - center.y) * zoomScale + 320;
+  return {
+    left: `${THREE.MathUtils.clamp((x / 640) * 100, 2, 98)}%`,
+    top: `${THREE.MathUtils.clamp((y / 640) * 100, 2, 98)}%`
   };
 }
 
@@ -1624,7 +1612,6 @@ export default function App() {
   const canvasRef = useRef(null);
   const previewCanvasRef = useRef(null);
   const mapOverviewPreviewCanvasRef = useRef(null);
-  const mapOverviewMapRef = useRef(null);
   const sectionCanvasRef = useRef(null);
   const sceneRef = useRef(null);
   const previewSceneRef = useRef(null);
@@ -1658,8 +1645,6 @@ export default function App() {
   const floorRef = useRef(null);
   const gridRef = useRef(null);
   const stageMapRef = useRef({ mesh: null, material: null, texture: null });
-  const mapOverviewInstanceRef = useRef(null);
-  const mapOverviewMarkersRef = useRef([]);
   const dragRef = useRef({
     active: false,
     object: null,
@@ -1709,8 +1694,6 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState(null);
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
   const [mapOverviewOpen, setMapOverviewOpen] = useState(false);
-  const [mapOverviewError, setMapOverviewError] = useState("");
-  const [mapOverviewMapReady, setMapOverviewMapReady] = useState(false);
   const [hoveredMapModelId, setHoveredMapModelId] = useState(null);
   const [mapStageVisible, setMapStageVisible] = useState(false);
   const [mobileModulePanelOpen, setMobileModulePanelOpen] = useState(false);
@@ -1744,7 +1727,18 @@ export default function App() {
     () => locationModels.find((model) => model.id === hoveredMapModelId) ?? null,
     [hoveredMapModelId, locationModels]
   );
-  const mapOverviewFallbackUrl = useMemo(() => getGoogleOverviewMapUrl(locationModels), [locationModels]);
+  const mapOverviewFallbackUrl = useMemo(
+    () => getGoogleOverviewMapUrl(locationModels, mapOverviewBounds),
+    [locationModels, mapOverviewBounds]
+  );
+  const mapOverviewPins = useMemo(
+    () =>
+      locationModels.map((model) => ({
+        model,
+        style: getMapOverviewPinStyle(model, mapOverviewBounds)
+      })),
+    [locationModels, mapOverviewBounds]
+  );
 
   const requestSceneRender = useCallback(() => {
     requestRenderRef.current();
@@ -1963,90 +1957,6 @@ export default function App() {
       renderer.dispose();
     };
   }, [hoveredMapModel, styleKey, edgeColor, edgeThickness]);
-
-  useEffect(() => {
-    const container = mapOverviewMapRef.current;
-    if (!mapOverviewOpen || !container) return undefined;
-
-    let cancelled = false;
-    setMapOverviewError("");
-    setMapOverviewMapReady(false);
-
-    async function renderTaggedMapOverview() {
-      try {
-        const googleMaps = await loadGoogleMapsApi();
-        if (cancelled) return;
-
-        const bounds = getTaggedMapBounds(locationModels);
-        const map =
-          mapOverviewInstanceRef.current ??
-          new googleMaps.Map(container, {
-            center: { lat: bounds.centerLat, lng: bounds.centerLon },
-            zoom: bounds.zoom,
-            mapTypeId: "roadmap",
-            fullscreenControl: false,
-            streetViewControl: false,
-            mapTypeControl: false
-          });
-
-        mapOverviewInstanceRef.current = map;
-        map.setMapTypeId("roadmap");
-        googleMaps.event.addListenerOnce(map, "tilesloaded", () => {
-          if (!cancelled) {
-            setMapOverviewMapReady(true);
-          }
-        });
-        mapOverviewMarkersRef.current.forEach((marker) => marker.setMap(null));
-        mapOverviewMarkersRef.current = [];
-
-        if (locationModels.length === 0) {
-          map.setCenter({ lat: bounds.centerLat, lng: bounds.centerLon });
-          map.setZoom(bounds.zoom);
-          return;
-        }
-
-        const googleBounds = new googleMaps.LatLngBounds();
-        locationModels.forEach((model) => {
-          const position = { lat: asNumber(model.lat, 0), lng: asNumber(model.lon, 0) };
-          googleBounds.extend(position);
-          const marker = new googleMaps.Marker({
-            map,
-            position,
-            title: model.name,
-            icon: {
-              path: googleMaps.SymbolPath.CIRCLE,
-              scale: 7,
-              fillColor: "#c9473d",
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 2
-            }
-          });
-          marker.addListener("mouseover", () => setHoveredMapModelId(model.id));
-          marker.addListener("mouseout", () => setHoveredMapModelId((current) => (current === model.id ? null : current)));
-          marker.addListener("click", () => void openLocationModelRef.current?.(model));
-          mapOverviewMarkersRef.current.push(marker);
-        });
-
-        if (locationModels.length === 1) {
-          map.setCenter(googleBounds.getCenter());
-          map.setZoom(locationModels[0].zoom ?? 14);
-        } else {
-          map.fitBounds(googleBounds, 72);
-        }
-      } catch {
-        if (!cancelled) {
-          setMapOverviewError("Google Maps API key is missing or unavailable.");
-        }
-      }
-    }
-
-    void renderTaggedMapOverview();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [mapOverviewOpen, locationModels]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -5936,28 +5846,33 @@ export default function App() {
                 </button>
               </div>
               <div className="map-overview-body">
-                <iframe
-                  className="map-overview-frame"
-                  title="Tagged model overview map fallback"
-                  src={getGoogleDefaultMapUrl(
-                    mapOverviewBounds.centerLat,
-                    mapOverviewBounds.centerLon,
-                    mapOverviewBounds.zoom
-                  )}
-                  loading="lazy"
-                  referrerPolicy="no-referrer-when-downgrade"
-                />
                 {locationModels.length > 0 ? (
-                  <img className="map-overview-fallback" src={mapOverviewFallbackUrl} alt="" />
-                ) : null}
-                <div
-                  ref={mapOverviewMapRef}
-                  className={`map-overview-google-map${mapOverviewMapReady ? " ready" : ""}`}
-                />
-                {!mapOverviewMapReady && !mapOverviewError ? (
-                  <div className="map-overview-loading">Loading interactive map</div>
-                ) : null}
-                {mapOverviewError ? <div className="map-overview-error">{mapOverviewError}</div> : null}
+                  <>
+                    <img className="map-overview-fallback" src={mapOverviewFallbackUrl} alt="" />
+                    <div className="map-overview-pins" aria-label="Tagged model locations">
+                      {mapOverviewPins.map(({ model, style }) => (
+                        <button
+                          key={model.id}
+                          type="button"
+                          className="map-overview-pin"
+                          style={style}
+                          title={model.name}
+                          onMouseEnter={() => setHoveredMapModelId(model.id)}
+                          onMouseLeave={() =>
+                            setHoveredMapModelId((current) => (current === model.id ? null : current))
+                          }
+                          onFocus={() => setHoveredMapModelId(model.id)}
+                          onBlur={() => setHoveredMapModelId((current) => (current === model.id ? null : current))}
+                          onClick={() => void openLocationModel(model)}
+                        >
+                          <span>{model.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="map-overview-empty">No tagged models saved yet.</div>
+                )}
                 {hoveredMapModel ? (
                   <div className="map-overview-preview">
                     <strong>{hoveredMapModel.name}</strong>

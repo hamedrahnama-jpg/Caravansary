@@ -19,12 +19,21 @@ export default async function handler(request, response) {
     return;
   }
 
+  const lat = Number(url.searchParams.get("lat"));
+  const lon = Number(url.searchParams.get("lon"));
+  const zoom = Number(url.searchParams.get("zoom"));
   const params = new URLSearchParams({
     size: "640x640",
     scale: "2",
     maptype: "roadmap",
     key: apiKey
   });
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    params.set("center", `${lat},${lon}`);
+  }
+  if (Number.isFinite(zoom)) {
+    params.set("zoom", String(Math.max(1, Math.min(21, Math.round(zoom)))));
+  }
   params.append("markers", `color:red|size:small|${points.map(([lat, lon]) => `${lat},${lon}`).join("|")}`);
 
   const googleResponse = await fetch(`https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`);
