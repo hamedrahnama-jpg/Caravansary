@@ -478,13 +478,140 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([bytes], { type: mimeType });
 }
 
-function rangesOverlap(aMin, aMax, bMin, bMax, tolerance = EDGE_SNAP_DISTANCE) {
-  return aMin <= bMax + tolerance && aMax >= bMin - tolerance;
-}
-
 function getObjectBox(object) {
   object.updateWorldMatrix(true, true);
   return new THREE.Box3().setFromObject(object);
+}
+
+function makeVerticalFaceSegment(pointA, pointB) {
+  const start = new THREE.Vector2(pointA.x, pointA.z);
+  const end = new THREE.Vector2(pointB.x, pointB.z);
+  const vector = end.clone().sub(start);
+  const length = vector.length();
+  if (length <= 0.08) return null;
+  const direction = vector.multiplyScalar(1 / length);
+  const normal = new THREE.Vector2(-direction.y, direction.x);
+  const startProjection = start.dot(direction);
+  const endProjection = end.dot(direction);
+  return {
+    start,
+    end,
+    direction,
+    normal,
+    min: Math.min(startProjection, endProjection),
+    max: Math.max(startProjection, endProjection)
+  };
+}
+
+function getVisibleVerticalFaceSegments(object) {
+  const segments = [];
+  const parentInverse = new THREE.Matrix4();
+  object.parent?.updateWorldMatrix(true, false);
+  if (object.parent) {
+    parentInverse.copy(object.parent.matrixWorld).invert();
+  }
+
+  const vertexA = new THREE.Vector3();
+  const vertexB = new THREE.Vector3();
+  const vertexC = new THREE.Vector3();
+  const edgeA = new THREE.Vector3();
+  const edgeB = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const projected = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+
+  object.updateWorldMatrix(true, true);
+  object.traverse((child) => {
+    if (
+      !child.isMesh ||
+      child.userData?.isExportEdge ||
+      child.userData?.isSectionCap ||
+      !child.visible ||
+      !child.geometry?.attributes?.position
+    ) {
+      return;
+    }
+
+    child.updateWorldMatrix(true, false);
+    const position = child.geometry.attributes.position;
+    const index = child.geometry.index;
+    const triangleCount = index ? index.count / 3 : position.count / 3;
+
+    for (let triangleIndex = 0; triangleIndex < triangleCount; triangleIndex += 1) {
+      const aIndex = index ? index.getX(triangleIndex * 3) : triangleIndex * 3;
+      const bIndex = index ? index.getX(triangleIndex * 3 + 1) : triangleIndex * 3 + 1;
+      const cIndex = index ? index.getX(triangleIndex * 3 + 2) : triangleIndex * 3 + 2;
+
+      vertexA.fromBufferAttribute(position, aIndex).applyMatrix4(child.matrixWorld).applyMatrix4(parentInverse);
+      vertexB.fromBufferAttribute(position, bIndex).applyMatrix4(child.matrixWorld).applyMatrix4(parentInverse);
+      vertexC.fromBufferAttribute(position, cIndex).applyMatrix4(child.matrixWorld).applyMatrix4(parentInverse);
+
+      normal.crossVectors(edgeA.subVectors(vertexB, vertexA), edgeB.subVectors(vertexC, vertexA)).normalize();
+      if (!Number.isFinite(normal.x) || Math.abs(normal.y) > 0.18) continue;
+      if (Math.max(vertexA.y, vertexB.y, vertexC.y) - Math.min(vertexA.y, vertexB.y, vertexC.y) <= 0.08) continue;
+
+      projected[0].copy(vertexA);
+      projected[1].copy(vertexB);
+      projected[2].copy(vertexC);
+      let bestPair = null;
+      [
+        [projected[0], projected[1]],
+        [projected[1], projected[2]],
+        [projected[2], projected[0]]
+      ].forEach(([start, end]) => {
+        const distance = Math.hypot(start.x - end.x, start.z - end.z);
+        if (!bestPair || distance > bestPair.distance) {
+          bestPair = { start, end, distance };
+        }
+      });
+
+      const segment = bestPair ? makeVerticalFaceSegment(bestPair.start, bestPair.end) : null;
+      if (segment) segments.push(segment);
+    }
+  });
+
+  return segments;
+}
+
+function getVerticalFaceSnapDelta(movingSegment, targetSegment) {
+  const parallel = Math.abs(movingSegment.direction.dot(targetSegment.direction));
+  if (parallel < 0.985) return null;
+
+  const targetStart = targetSegment.start.dot(movingSegment.direction);
+  const targetEnd = targetSegment.end.dot(movingSegment.direction);
+  const targetMin = Math.min(targetStart, targetEnd);
+  const targetMax = Math.max(targetStart, targetEnd);
+  const overlap = Math.min(movingSegment.max, targetMax) - Math.max(movingSegment.min, targetMin);
+
+  const signedDistance = movingSegment.start.clone().sub(targetSegment.start).dot(targetSegment.normal);
+  const normalDistance = Math.abs(signedDistance);
+  if (normalDistance > EDGE_SNAP_DISTANCE) return null;
+
+  const edgeAlignmentCandidates = [
+    targetMin - movingSegment.min,
+    targetMax - movingSegment.max,
+    targetMin - movingSegment.max,
+    targetMax - movingSegment.min
+  ]
+    .map((value) => ({ value, distance: Math.abs(value) }))
+    .filter((candidate) => candidate.distance <= EDGE_SNAP_DISTANCE)
+    .sort((a, b) => a.distance - b.distance);
+
+  const hasFaceContact = overlap > 0.08;
+  const bestEdgeAlignment = edgeAlignmentCandidates[0] ?? null;
+  if (!hasFaceContact && !bestEdgeAlignment) return null;
+
+  const normalDelta = targetSegment.normal.clone().multiplyScalar(-signedDistance);
+  const edgeDelta = bestEdgeAlignment
+    ? movingSegment.direction.clone().multiplyScalar(bestEdgeAlignment.value)
+    : new THREE.Vector2(0, 0);
+  const score = normalDistance + (bestEdgeAlignment ? bestEdgeAlignment.distance * 0.35 : 0);
+  return {
+    distance: score,
+    normalDistance,
+    edgeDistance: bestEdgeAlignment?.distance ?? Infinity,
+    overlap,
+    delta: normalDelta.add(edgeDelta)
+  };
 }
 
 function applyExactDimensions(group, dimensions) {
@@ -1441,16 +1568,6 @@ export default function App() {
     startY: 0,
     moved: false
   });
-  const marqueeRef = useRef({
-    active: false,
-    append: false,
-    pointerId: null,
-    startX: 0,
-    startY: 0,
-    currentX: 0,
-    currentY: 0,
-    moved: false
-  });
   const sectionDragRef = useRef(null);
   const fileInputRef = useRef(null);
   const moduleLibraryInputRef = useRef(null);
@@ -1479,13 +1596,11 @@ export default function App() {
   const [planSectionEnabled, setPlanSectionEnabled] = useState(false);
   const [planSectionHeight, setPlanSectionHeight] = useState(1);
   const [walkMode, setWalkMode] = useState(false);
-  const [selectionMode, setSelectionMode] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [modelScale, setModelScale] = useState(1);
   const [placed, setPlaced] = useState([]);
   const [selectedPlaced, setSelectedPlaced] = useState(null);
   const [selectedPlacedIds, setSelectedPlacedIds] = useState([]);
-  const [selectionBox, setSelectionBox] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
   const [mapStageVisible, setMapStageVisible] = useState(false);
@@ -2449,144 +2564,37 @@ export default function App() {
   }
 
   function snapMeshToObjectEdges(mesh) {
-    const movingBox = getObjectBox(mesh);
-    let bestX = { distance: EDGE_SNAP_DISTANCE, value: mesh.position.x };
-    let bestZ = { distance: EDGE_SNAP_DISTANCE, value: mesh.position.z };
+    const movingSegments = getVisibleVerticalFaceSegments(mesh);
+    let bestSnap = null;
 
     placedRef.current.forEach((item) => {
       if (item.mesh === mesh) return;
-      const targetBox = getObjectBox(item.mesh);
-      const overlapsZ = rangesOverlap(movingBox.min.z, movingBox.max.z, targetBox.min.z, targetBox.max.z);
-      const overlapsX = rangesOverlap(movingBox.min.x, movingBox.max.x, targetBox.min.x, targetBox.max.x);
-
-      if (overlapsZ) {
-        [
-          {
-            distance: Math.abs(movingBox.min.x - targetBox.max.x),
-            value: mesh.position.x + targetBox.max.x - movingBox.min.x
-          },
-          {
-            distance: Math.abs(movingBox.max.x - targetBox.min.x),
-            value: mesh.position.x + targetBox.min.x - movingBox.max.x
-          },
-          {
-            distance: Math.abs(movingBox.min.x - targetBox.min.x),
-            value: mesh.position.x + targetBox.min.x - movingBox.min.x
-          },
-          {
-            distance: Math.abs(movingBox.max.x - targetBox.max.x),
-            value: mesh.position.x + targetBox.max.x - movingBox.max.x
-          }
-        ].forEach((candidate) => {
-          if (candidate.distance < bestX.distance) {
-            bestX = candidate;
+      const targetSegments = getVisibleVerticalFaceSegments(item.mesh);
+      movingSegments.forEach((movingSegment) => {
+        targetSegments.forEach((targetSegment) => {
+          const candidate = getVerticalFaceSnapDelta(movingSegment, targetSegment);
+          if (
+            candidate &&
+            (!bestSnap ||
+              candidate.distance < bestSnap.distance ||
+              (candidate.distance === bestSnap.distance && candidate.overlap > bestSnap.overlap))
+          ) {
+            bestSnap = candidate;
           }
         });
-      }
-
-      if (overlapsX) {
-        [
-          {
-            distance: Math.abs(movingBox.min.z - targetBox.max.z),
-            value: mesh.position.z + targetBox.max.z - movingBox.min.z
-          },
-          {
-            distance: Math.abs(movingBox.max.z - targetBox.min.z),
-            value: mesh.position.z + targetBox.min.z - movingBox.max.z
-          },
-          {
-            distance: Math.abs(movingBox.min.z - targetBox.min.z),
-            value: mesh.position.z + targetBox.min.z - movingBox.min.z
-          },
-          {
-            distance: Math.abs(movingBox.max.z - targetBox.max.z),
-            value: mesh.position.z + targetBox.max.z - movingBox.max.z
-          }
-        ].forEach((candidate) => {
-          if (candidate.distance < bestZ.distance) {
-            bestZ = candidate;
-          }
-        });
-      }
+      });
     });
 
-    mesh.position.x = bestX.value;
-    mesh.position.z = bestZ.value;
+    if (bestSnap) {
+      mesh.position.x += bestSnap.delta.x;
+      mesh.position.z += bestSnap.delta.y;
+    }
   }
 
   function setPointer(event) {
     const bounds = canvasRef.current.getBoundingClientRect();
     pointerRef.current.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     pointerRef.current.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
-  }
-
-  function getCanvasPoint(event) {
-    const bounds = canvasRef.current.getBoundingClientRect();
-    return {
-      x: event.clientX - bounds.left,
-      y: event.clientY - bounds.top
-    };
-  }
-
-  function getSelectionRect(startX, startY, currentX, currentY) {
-    const left = Math.min(startX, currentX);
-    const top = Math.min(startY, currentY);
-    const width = Math.abs(currentX - startX);
-    const height = Math.abs(currentY - startY);
-    return { left, top, width, height };
-  }
-
-  function getProjectedObjectRect(object) {
-    const camera = controlsRef.current?.object;
-    const canvas = canvasRef.current;
-    if (!camera || !canvas) return null;
-    const bounds = canvas.getBoundingClientRect();
-    const box = getObjectBox(object);
-    if (box.isEmpty()) return null;
-    const corners = [
-      [box.min.x, box.min.y, box.min.z],
-      [box.min.x, box.min.y, box.max.z],
-      [box.min.x, box.max.y, box.min.z],
-      [box.min.x, box.max.y, box.max.z],
-      [box.max.x, box.min.y, box.min.z],
-      [box.max.x, box.min.y, box.max.z],
-      [box.max.x, box.max.y, box.min.z],
-      [box.max.x, box.max.y, box.max.z]
-    ];
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    corners.forEach(([x, y, z]) => {
-      const projected = new THREE.Vector3(x, y, z).project(camera);
-      const screenX = ((projected.x + 1) / 2) * bounds.width;
-      const screenY = ((1 - projected.y) / 2) * bounds.height;
-      minX = Math.min(minX, screenX);
-      minY = Math.min(minY, screenY);
-      maxX = Math.max(maxX, screenX);
-      maxY = Math.max(maxY, screenY);
-    });
-    if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
-    return { left: minX, top: minY, right: maxX, bottom: maxY };
-  }
-
-  function getItemsInSelectionRect(rect) {
-    const selectionRight = rect.left + rect.width;
-    const selectionBottom = rect.top + rect.height;
-    return placedRef.current
-      .filter((item) => {
-        const itemRect = getProjectedObjectRect(item.mesh);
-        if (!itemRect) return false;
-        const centerX = (itemRect.left + itemRect.right) / 2;
-        const centerY = (itemRect.top + itemRect.bottom) / 2;
-        return (
-          centerX >= rect.left &&
-          centerX <= selectionRight &&
-          centerY >= rect.top &&
-          centerY <= selectionBottom
-        );
-      })
-      .map((item) => item.id);
   }
 
   function getPlacedItemAtPointer(event) {
@@ -2645,9 +2653,6 @@ export default function App() {
     if (event.button !== 0) return;
     if (walkMode) return;
     setContextMenu(null);
-    if (!selectionMode) {
-      return;
-    }
     const point = getFloorPoint(event);
     const sectionLineKey = getSectionLineAtPoint(point);
     if (sectionLineKey) {
@@ -2658,58 +2663,29 @@ export default function App() {
     }
     const hit = getPlacedItemAtPointer(event);
     if (!hit) {
-      if (event.altKey) {
-        return;
-      }
-      const pointOnCanvas = getCanvasPoint(event);
-      marqueeRef.current = {
-        active: true,
-        append: event.ctrlKey || event.metaKey,
-        pointerId: event.pointerId,
-        startX: pointOnCanvas.x,
-        startY: pointOnCanvas.y,
-        currentX: pointOnCanvas.x,
-        currentY: pointOnCanvas.y,
-        moved: false
-      };
-      setSelectionBox({
-        left: pointOnCanvas.x,
-        top: pointOnCanvas.y,
-        width: 0,
-        height: 0
-      });
-      controlsRef.current.enabled = false;
-      event.currentTarget.setPointerCapture?.(event.pointerId);
-      return;
-    }
-    const isMultiSelect = event.shiftKey || event.ctrlKey || event.metaKey;
-    const wasSelected = selectedPlacedIdsRef.current.includes(hit.item.id);
-    const nextSelectedIds = isMultiSelect
-      ? wasSelected
-        ? selectedPlacedIdsRef.current.filter((id) => id !== hit.item.id)
-        : [...selectedPlacedIdsRef.current, hit.item.id]
-      : wasSelected
-        ? selectedPlacedIdsRef.current
-        : [hit.item.id];
-
-    if (nextSelectedIds.length === 0) {
       selectPlacedItems([]);
+      if (controlsRef.current) {
+        controlsRef.current.enabled = true;
+      }
       return;
     }
-
-    selectPlacedItems(nextSelectedIds);
+    const wasSelected = selectedPlacedIdsRef.current.includes(hit.item.id);
+    const dragItemIds = wasSelected ? selectedPlacedIdsRef.current : [hit.item.id];
+    if (!wasSelected) {
+      selectPlacedItems(dragItemIds);
+    }
     dragRef.current = {
       active: true,
       object: hit.root,
-      itemIds: nextSelectedIds,
+      itemIds: dragItemIds,
       startPoint: point ? point.clone() : null,
       startPositions: new Map(
         placedRef.current
-          .filter((item) => nextSelectedIds.includes(item.id))
+          .filter((item) => dragItemIds.includes(item.id))
           .map((item) => [item.id, item.mesh.position.clone()])
       ),
       historySnapshot: serializeDesign(),
-      rotateOnClick: wasSelected && nextSelectedIds.includes(hit.item.id) && !isMultiSelect,
+      rotateOnClick: wasSelected,
       startX: event.clientX,
       startY: event.clientY,
       moved: false
@@ -2718,15 +2694,6 @@ export default function App() {
   }
 
   function handlePointerMove(event) {
-    if (marqueeRef.current.active) {
-      const pointOnCanvas = getCanvasPoint(event);
-      const marquee = marqueeRef.current;
-      marquee.currentX = pointOnCanvas.x;
-      marquee.currentY = pointOnCanvas.y;
-      marquee.moved = Math.hypot(pointOnCanvas.x - marquee.startX, pointOnCanvas.y - marquee.startY) > 4;
-      setSelectionBox(getSelectionRect(marquee.startX, marquee.startY, marquee.currentX, marquee.currentY));
-      return;
-    }
     if (sectionDragRef.current) {
       updateSectionOffsetFromPoint(sectionDragRef.current, getFloorPoint(event));
       return;
@@ -2736,9 +2703,10 @@ export default function App() {
       event.clientX - dragRef.current.startX,
       event.clientY - dragRef.current.startY
     );
-    if (pointerDistance > 5) {
-      dragRef.current.moved = true;
+    if (pointerDistance <= 5) {
+      return;
     }
+    dragRef.current.moved = true;
     const point = getFloorPoint(event);
     if (!point) return;
     const drag = dragRef.current;
@@ -2760,32 +2728,7 @@ export default function App() {
     refreshSelectionHelpers();
   }
 
-  function handlePointerUp(event) {
-    if (marqueeRef.current.active) {
-      const marquee = marqueeRef.current;
-      const rect = getSelectionRect(marquee.startX, marquee.startY, marquee.currentX, marquee.currentY);
-      const selectedByRect = marquee.moved ? getItemsInSelectionRect(rect) : [];
-      const nextIds = marquee.append
-        ? Array.from(new Set([...selectedPlacedIdsRef.current, ...selectedByRect]))
-        : selectedByRect;
-      selectPlacedItems(nextIds);
-      marqueeRef.current = {
-        active: false,
-        append: false,
-        pointerId: null,
-        startX: 0,
-        startY: 0,
-        currentX: 0,
-        currentY: 0,
-        moved: false
-      };
-      setSelectionBox(null);
-      if (controlsRef.current) {
-        controlsRef.current.enabled = true;
-      }
-      event?.currentTarget?.releasePointerCapture?.(marquee.pointerId);
-      return;
-    }
+  function handlePointerUp() {
     if (sectionDragRef.current) {
       sectionDragRef.current = null;
       if (controlsRef.current) {
@@ -2799,11 +2742,13 @@ export default function App() {
     if (drag.active && drag.moved) {
       pushUndoSnapshot(drag.historySnapshot);
       setPlaced(placedRef.current.map(({ id, module }) => ({ id, moduleId: module.id })));
-    } else if (drag.active && drag.rotateOnClick) {
+    } else if (drag.active && !drag.moved && drag.rotateOnClick) {
       const item = placedRef.current.find((placedItem) => placedItem.mesh === drag.object);
       if (item) {
         rotatePlacedItems(drag.itemIds.length > 0 ? drag.itemIds : [item.id]);
       }
+    } else if (drag.active && !drag.moved) {
+      selectPlacedItems(drag.itemIds);
     }
     dragRef.current = {
       active: false,
@@ -4280,7 +4225,7 @@ export default function App() {
     itemIds.forEach((itemId) => {
       const item = placedRef.current.find((placedItem) => placedItem.id === itemId);
       if (!item) return;
-      item.rotationY = ((item.rotationY ?? 0) + Math.PI / 2) % (Math.PI * 2);
+      item.rotationY = ((item.rotationY ?? 0) + Math.PI / 4) % (Math.PI * 2);
       item.mesh.rotation.y = item.rotationY;
       lastModuleRotationRef.current.set(item.module.id, item.rotationY);
     });
@@ -5173,9 +5118,9 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setSelectionMode((current) => !current)}
-                title="Selection mode"
-                className={selectionMode ? "active" : ""}
+                onClick={() => selectPlacedItems(placedRef.current.map((item) => item.id))}
+                title="Select all modules"
+                className={placed.length > 0 && selectedPlacedIds.length === placed.length ? "active" : ""}
                 disabled={walkMode}
               >
                 <MousePointer2 size={18} aria-hidden="true" />
@@ -5633,17 +5578,6 @@ export default function App() {
                 Delete
               </button>
             </div>
-          ) : null}
-          {selectionBox ? (
-            <div
-              className="selection-marquee"
-              style={{
-                left: selectionBox.left,
-                top: selectionBox.top,
-                width: selectionBox.width,
-                height: selectionBox.height
-              }}
-            />
           ) : null}
           {activeSectionCuts.length > 0 ? (
             <div className="section-viewport" onPointerDown={(event) => event.stopPropagation()}>

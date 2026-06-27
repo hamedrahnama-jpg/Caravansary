@@ -567,15 +567,6 @@ h1 {
   touch-action: none;
 }
 
-.selection-marquee {
-  position: absolute;
-  z-index: 20;
-  pointer-events: none;
-  border: 2px solid #2f7db8;
-  background: rgba(47, 125, 184, 0.16);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset;
-}
-
 .map-guide {
   position: absolute;
   top: 14px;
