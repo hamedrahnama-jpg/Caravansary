@@ -527,6 +527,15 @@ function getMercatorPoint(lat, lon) {
   };
 }
 
+function getLatLonFromMercatorPoint(point) {
+  const lon = (point.x / 256 - 0.5) * 360;
+  const n = Math.PI - (2 * Math.PI * point.y) / 256;
+  return {
+    lat: THREE.MathUtils.radToDeg(Math.atan(Math.sinh(n))),
+    lon
+  };
+}
+
 function getMapOverviewPinStyle(model, bounds, size) {
   const zoomScale = 2 ** Math.round(THREE.MathUtils.clamp(asNumber(bounds.zoom, 5), 1, 21));
   const center = getMercatorPoint(bounds.centerLat, bounds.centerLon);
@@ -1681,6 +1690,7 @@ export default function App() {
   const previewCanvasRef = useRef(null);
   const mapOverviewPreviewCanvasRef = useRef(null);
   const mapOverviewBodyRef = useRef(null);
+  const mapPickerBodyRef = useRef(null);
   const sectionCanvasRef = useRef(null);
   const sceneRef = useRef(null);
   const previewSceneRef = useRef(null);
@@ -1714,6 +1724,7 @@ export default function App() {
   const floorRef = useRef(null);
   const gridRef = useRef(null);
   const stageMapRef = useRef({ mesh: null, material: null, texture: null });
+  const mapPickerDragRef = useRef(null);
   const dragRef = useRef({
     active: false,
     object: null,
@@ -1764,8 +1775,6 @@ export default function App() {
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
   const [mapOverviewOpen, setMapOverviewOpen] = useState(false);
   const [mapPickerOpen, setMapPickerOpen] = useState(false);
-  const [mapPickerError, setMapPickerError] = useState("");
-  const [mapPickerLoading, setMapPickerLoading] = useState(false);
   const [mapOverviewSize, setMapOverviewSize] = useState({ width: 640, height: 360 });
   const [hoveredMapModelId, setHoveredMapModelId] = useState(null);
   const [mapStageVisible, setMapStageVisible] = useState(false);
@@ -3316,26 +3325,47 @@ export default function App() {
     }
   }
 
-  function useBrowserLocationForTag() {
-    if (!navigator.geolocation) {
-      setMapPickerError("Browser location is not available.");
-      return;
+  function handleMapPickerPointerDown(event) {
+    if (event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    mapPickerDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: rect.width,
+      height: rect.height,
+      lat: asNumber(mapLat, 0),
+      lon: asNumber(mapLon, 0),
+      zoom: Math.round(THREE.MathUtils.clamp(asNumber(mapZoom, 18), 1, 21))
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleMapPickerPointerMove(event) {
+    const drag = mapPickerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const coverScale = Math.max(drag.width / 640, drag.height / 640, 1);
+    const zoomScale = 2 ** drag.zoom;
+    const center = getMercatorPoint(drag.lat, drag.lon);
+    const next = getLatLonFromMercatorPoint({
+      x: center.x - (event.clientX - drag.startX) / coverScale / zoomScale,
+      y: center.y - (event.clientY - drag.startY) / coverScale / zoomScale
+    });
+    setMapLat(Number(THREE.MathUtils.clamp(next.lat, -85, 85).toFixed(6)));
+    setMapLon(Number(((((next.lon + 180) % 360) + 360) % 360 - 180).toFixed(6)));
+  }
+
+  function handleMapPickerPointerUp(event) {
+    if (mapPickerDragRef.current?.pointerId === event.pointerId) {
+      mapPickerDragRef.current = null;
     }
-    setMapPickerError("");
-    setMapPickerLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setMapLat(Number(position.coords.latitude.toFixed(6)));
-        setMapLon(Number(position.coords.longitude.toFixed(6)));
-        setMapZoom((current) => Math.max(18, Math.round(THREE.MathUtils.clamp(asNumber(current, 18), 1, 21))));
-        setMapRefreshKey((current) => current + 1);
-        setMapPickerLoading(false);
-      },
-      (error) => {
-        setMapPickerLoading(false);
-        setMapPickerError(error?.message || "Could not read browser location.");
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 15000 }
+  }
+
+  function handleMapPickerWheel(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    setMapZoom((current) =>
+      Math.round(THREE.MathUtils.clamp(asNumber(current, 18) + (event.deltaY > 0 ? -1 : 1), 1, 21))
     );
   }
 
@@ -5849,7 +5879,7 @@ export default function App() {
                 <iframe
                   key={`guide-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
                   title="Google satellite map"
-                  src={getGoogleSatelliteUrl(mapLat, mapLon, mapZoom)}
+                  src={getGoogleStaticMapUrl(mapLat, mapLon, mapZoom)}
                   loading="lazy"
                   referrerPolicy="no-referrer-when-downgrade"
                 />
@@ -5993,9 +6023,6 @@ export default function App() {
                     {Math.round(asNumber(mapZoom, 18))}
                   </span>
                 </div>
-                <button type="button" onClick={useBrowserLocationForTag}>
-                  Use my location
-                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -6009,20 +6036,25 @@ export default function App() {
                   <X size={16} aria-hidden="true" />
                 </button>
               </div>
-              <div className="map-picker-body">
-                <iframe
+              <div
+                ref={mapPickerBodyRef}
+                className="map-picker-body"
+                onPointerDown={handleMapPickerPointerDown}
+                onPointerMove={handleMapPickerPointerMove}
+                onPointerUp={handleMapPickerPointerUp}
+                onPointerCancel={handleMapPickerPointerUp}
+                onWheel={handleMapPickerWheel}
+              >
+                <img
                   key={`picker-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
                   className="map-picker-frame"
-                  title="Fullscreen Google map"
                   src={getGoogleSatelliteUrl(mapLat, mapLon, mapZoom)}
-                  loading="lazy"
-                  referrerPolicy="no-referrer-when-downgrade"
+                  alt=""
+                  draggable="false"
                 />
                 <div className="map-picker-crosshair">
                   <Crosshair size={28} aria-hidden="true" />
                 </div>
-                {mapPickerLoading ? <div className="map-picker-status">Reading browser location</div> : null}
-                {mapPickerError ? <div className="map-picker-status error">{mapPickerError}</div> : null}
               </div>
             </div>
           ) : null}
