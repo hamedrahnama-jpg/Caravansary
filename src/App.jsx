@@ -125,7 +125,9 @@ const MODULE_STORAGE_KEY = "caravansary.modules.v1";
 const MODEL_LOCATIONS_STORAGE_KEY = "caravansary.locationModels.v1";
 const MODULE_DB_NAME = "caravansary-module-assets";
 const MODULE_DB_STORE = "assets";
-const EDGE_SNAP_DISTANCE = 2.0;
+const EDGE_SNAP_DISTANCE = 1.15;
+const LIVE_SNAP_STRENGTH = 0.58;
+const EXTERNAL_FACE_TOLERANCE = 0.12;
 const EXPORT_QUALITY_OPTIONS = {
   standard: { label: "Standard", scale: 3, maxSide: 6000, shadowMapSize: 4096 },
   high: { label: "High", scale: 4, maxSide: 8192, shadowMapSize: 4096 },
@@ -593,6 +595,68 @@ function makeVerticalFaceSegment(pointA, pointB) {
   };
 }
 
+function cross2D(origin, pointA, pointB) {
+  return (pointA.x - origin.x) * (pointB.y - origin.y) - (pointA.y - origin.y) * (pointB.x - origin.x);
+}
+
+function getConvexHull2D(points) {
+  const unique = [];
+  points.forEach((point) => {
+    if (!unique.some((item) => item.distanceToSquared(point) <= 0.000001)) {
+      unique.push(point.clone());
+    }
+  });
+  if (unique.length <= 3) return unique;
+
+  unique.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+  const lower = [];
+  unique.forEach((point) => {
+    while (lower.length >= 2 && cross2D(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+      lower.pop();
+    }
+    lower.push(point);
+  });
+
+  const upper = [];
+  for (let index = unique.length - 1; index >= 0; index -= 1) {
+    const point = unique[index];
+    while (upper.length >= 2 && cross2D(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+      upper.pop();
+    }
+    upper.push(point);
+  }
+
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function distanceToSegment2D(point, start, end) {
+  const segment = end.clone().sub(start);
+  const lengthSq = segment.lengthSq();
+  if (lengthSq <= 0.000001) return point.distanceTo(start);
+  const t = THREE.MathUtils.clamp(point.clone().sub(start).dot(segment) / lengthSq, 0, 1);
+  return point.distanceTo(start.clone().add(segment.multiplyScalar(t)));
+}
+
+function isSegmentOnHull(segment, hull, tolerance = EXTERNAL_FACE_TOLERANCE) {
+  if (hull.length < 2) return true;
+  const midpoint = segment.start.clone().add(segment.end).multiplyScalar(0.5);
+  return hull.some((start, index) => {
+    const end = hull[(index + 1) % hull.length];
+    const hullDirection = end.clone().sub(start).normalize();
+    const parallel = Math.abs(hullDirection.dot(segment.direction));
+    return parallel >= 0.96 && distanceToSegment2D(midpoint, start, end) <= tolerance;
+  });
+}
+
+function getExternalVerticalFaceSegments(segments) {
+  if (segments.length <= 4) return segments;
+  const hull = getConvexHull2D(segments.flatMap((segment) => [segment.start, segment.end]));
+  const external = segments.filter((segment) => isSegmentOnHull(segment, hull));
+  return external.length > 0 ? external : segments;
+}
+
 function getVisibleVerticalFaceSegments(object) {
   const segments = [];
   const parentInverse = new THREE.Matrix4();
@@ -659,7 +723,7 @@ function getVisibleVerticalFaceSegments(object) {
     }
   });
 
-  return segments;
+  return getExternalVerticalFaceSegments(segments);
 }
 
 function getVerticalFaceSnapDelta(movingSegment, targetSegment, maxDistance = EDGE_SNAP_DISTANCE) {
@@ -683,7 +747,7 @@ function getVerticalFaceSnapDelta(movingSegment, targetSegment, maxDistance = ED
     targetMax - movingSegment.min
   ]
     .map((value) => ({ value, distance: Math.abs(value) }))
-    .filter((candidate) => candidate.distance <= maxDistance)
+    .filter((candidate) => candidate.distance <= maxDistance * 0.7)
     .sort((a, b) => a.distance - b.distance);
 
   const hasFaceContact = overlap > 0.08;
@@ -696,7 +760,7 @@ function getVerticalFaceSnapDelta(movingSegment, targetSegment, maxDistance = ED
     : new THREE.Vector2(0, 0);
   const alignedOverlap = Math.max(0, overlap);
   const edgeDistance = bestEdgeAlignment?.distance ?? maxDistance;
-  const score = normalDistance * 0.45 + edgeDistance * 0.08 - alignedOverlap * 0.04;
+  const score = normalDistance * 0.65 + edgeDistance * 0.12 - alignedOverlap * 0.03;
   return {
     distance: score,
     normalDistance,
@@ -2785,8 +2849,8 @@ export default function App() {
     void placeModule(module, 0, 0);
   }
 
-  function snapMeshToObjectEdges(mesh, { maxDistance = EDGE_SNAP_DISTANCE } = {}) {
-    for (let pass = 0; pass < 2; pass += 1) {
+  function snapMeshToObjectEdges(mesh, { maxDistance = EDGE_SNAP_DISTANCE, strength = 1, passes = 2 } = {}) {
+    for (let pass = 0; pass < passes; pass += 1) {
       const movingSegments = getVisibleVerticalFaceSegments(mesh);
       let bestSnap = null;
 
@@ -2799,8 +2863,7 @@ export default function App() {
             if (
               candidate &&
               (!bestSnap ||
-                candidate.edgeDistance < bestSnap.edgeDistance * 0.72 ||
-                candidate.distance < bestSnap.distance ||
+                candidate.distance < bestSnap.distance - 0.02 ||
                 (candidate.distance === bestSnap.distance && candidate.overlap > bestSnap.overlap))
             ) {
               bestSnap = candidate;
@@ -2812,8 +2875,9 @@ export default function App() {
       if (!bestSnap || bestSnap.delta.length() <= 0.0001) {
         break;
       }
-      mesh.position.x += bestSnap.delta.x;
-      mesh.position.z += bestSnap.delta.y;
+      const snapStrength = THREE.MathUtils.clamp(strength, 0, 1);
+      mesh.position.x += bestSnap.delta.x * snapStrength;
+      mesh.position.z += bestSnap.delta.y * snapStrength;
     }
   }
 
@@ -2949,7 +3013,7 @@ export default function App() {
     } else {
       drag.object.position.x = point.x;
       drag.object.position.z = point.z;
-      snapMeshToObjectEdges(drag.object);
+      snapMeshToObjectEdges(drag.object, { strength: LIVE_SNAP_STRENGTH, passes: 1 });
     }
     refreshSelectionHelpers();
   }
@@ -2966,6 +3030,10 @@ export default function App() {
     }
     const drag = dragRef.current;
     if (drag.active && drag.moved) {
+      if (drag.itemIds.length === 1 && drag.object) {
+        snapMeshToObjectEdges(drag.object, { strength: 1, passes: 2 });
+        refreshSelectionHelpers();
+      }
       pushUndoSnapshot(drag.historySnapshot);
       setPlaced(placedRef.current.map(({ id, module }) => ({ id, moduleId: module.id })));
     } else if (drag.active && !drag.moved && drag.rotateOnClick) {
