@@ -5735,68 +5735,70 @@ export default function App() {
                   <X size={15} aria-hidden="true" />
                 </button>
               </div>
-              <iframe
-                key={`guide-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
-                title="Google satellite map"
-                src={getGoogleSatelliteUrl(mapLat, mapLon, mapZoom)}
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-              />
-              <div className="map-guide-controls">
-                <label>
-                  Lat
-                  <input
-                    type="number"
-                    step="0.000001"
-                    value={mapLat}
-                    onChange={(event) => setMapLat(asNumber(event.target.value, 0))}
-                  />
-                </label>
-                <label>
-                  Lon
-                  <input
-                    type="number"
-                    step="0.000001"
-                    value={mapLon}
-                    onChange={(event) => setMapLon(asNumber(event.target.value, 0))}
-                  />
-                </label>
-                <label>
-                  Zoom
-                  <input
-                    type="number"
-                    min="1"
-                    max="21"
-                    step="1"
-                    value={mapZoom}
-                    onChange={(event) => setMapZoom(THREE.MathUtils.clamp(asNumber(event.target.value, 18), 1, 21))}
-                  />
-                </label>
-                <label className="map-name-field">
-                  Name
-                  <input
-                    type="text"
-                    value={locationModelName}
-                    onChange={(event) => setLocationModelName(event.target.value)}
-                  />
-                </label>
-                <button type="button" onClick={() => void saveCurrentModelToLocation()}>
-                  Tag Model
-                </button>
-                <button
-                  type="button"
-                  className={mapStageVisible ? "active" : ""}
-                  onClick={() => setMapStageVisible((current) => !current)}
-                >
-                  Stage Map
-                </button>
-                <button
-                  type="button"
-                  className={mapOverviewOpen ? "active" : ""}
-                  onClick={() => setMapOverviewOpen(true)}
-                >
-                  Overview
-                </button>
+              <div className="map-tag-card">
+                <iframe
+                  key={`guide-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
+                  title="Google satellite map"
+                  src={getGoogleSatelliteUrl(mapLat, mapLon, mapZoom)}
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+                <div className="map-guide-controls">
+                  <label>
+                    Lat
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={mapLat}
+                      onChange={(event) => setMapLat(asNumber(event.target.value, 0))}
+                    />
+                  </label>
+                  <label>
+                    Lon
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={mapLon}
+                      onChange={(event) => setMapLon(asNumber(event.target.value, 0))}
+                    />
+                  </label>
+                  <label>
+                    Zoom
+                    <input
+                      type="number"
+                      min="1"
+                      max="21"
+                      step="1"
+                      value={mapZoom}
+                      onChange={(event) => setMapZoom(THREE.MathUtils.clamp(asNumber(event.target.value, 18), 1, 21))}
+                    />
+                  </label>
+                  <label className="map-name-field">
+                    Name
+                    <input
+                      type="text"
+                      value={locationModelName}
+                      onChange={(event) => setLocationModelName(event.target.value)}
+                    />
+                  </label>
+                  <button type="button" onClick={() => void saveCurrentModelToLocation()}>
+                    Tag
+                  </button>
+                  <button
+                    type="button"
+                    className={mapStageVisible ? "active" : ""}
+                    onClick={() => setMapStageVisible((current) => !current)}
+                  >
+                    Stage
+                  </button>
+                  <button
+                    type="button"
+                    className={mapOverviewOpen ? "active" : ""}
+                    onClick={() => setMapOverviewOpen(true)}
+                  >
+                    View
+                  </button>
+                </div>
               </div>
               <div className="map-model-list">
                 {locationModels.length === 0 ? (
