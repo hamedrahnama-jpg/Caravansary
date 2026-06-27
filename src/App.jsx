@@ -452,6 +452,13 @@ function getGoogleSatelliteUrl(lat, lon, zoom) {
   return `https://maps.google.com/maps?q=${safeLat},${safeLon}&z=${safeZoom}&t=k&output=embed`;
 }
 
+function getGoogleDefaultMapUrl(lat, lon, zoom) {
+  const safeLat = asNumber(lat, 0);
+  const safeLon = asNumber(lon, 0);
+  const safeZoom = Math.round(THREE.MathUtils.clamp(asNumber(zoom, 5), 1, 21));
+  return `https://maps.google.com/maps?q=${safeLat},${safeLon}&z=${safeZoom}&output=embed`;
+}
+
 async function getGoogleMapsApiKey() {
   const envKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   if (envKey) return envKey;
@@ -491,6 +498,13 @@ function getGoogleStaticMapUrl(lat, lon, zoom) {
     zoom: String(safeZoom)
   });
   return `/api/static-map?${params.toString()}`;
+}
+
+function getGoogleOverviewMapUrl(models) {
+  const points = models
+    .map((model) => `${asNumber(model.lat, 0)},${asNumber(model.lon, 0)}`)
+    .join("|");
+  return `/api/overview-map?${new URLSearchParams({ points }).toString()}`;
 }
 
 function getTaggedMapBounds(models) {
@@ -1696,6 +1710,7 @@ export default function App() {
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
   const [mapOverviewOpen, setMapOverviewOpen] = useState(false);
   const [mapOverviewError, setMapOverviewError] = useState("");
+  const [mapOverviewMapReady, setMapOverviewMapReady] = useState(false);
   const [hoveredMapModelId, setHoveredMapModelId] = useState(null);
   const [mapStageVisible, setMapStageVisible] = useState(false);
   const [mobileModulePanelOpen, setMobileModulePanelOpen] = useState(false);
@@ -1724,10 +1739,12 @@ export default function App() {
     () => modules.find((module) => module.id === editingModule) ?? modules[0],
     [editingModule, modules]
   );
+  const mapOverviewBounds = useMemo(() => getTaggedMapBounds(locationModels), [locationModels]);
   const hoveredMapModel = useMemo(
     () => locationModels.find((model) => model.id === hoveredMapModelId) ?? null,
     [hoveredMapModelId, locationModels]
   );
+  const mapOverviewFallbackUrl = useMemo(() => getGoogleOverviewMapUrl(locationModels), [locationModels]);
 
   const requestSceneRender = useCallback(() => {
     requestRenderRef.current();
@@ -1953,6 +1970,7 @@ export default function App() {
 
     let cancelled = false;
     setMapOverviewError("");
+    setMapOverviewMapReady(false);
 
     async function renderTaggedMapOverview() {
       try {
@@ -1973,6 +1991,11 @@ export default function App() {
 
         mapOverviewInstanceRef.current = map;
         map.setMapTypeId("roadmap");
+        googleMaps.event.addListenerOnce(map, "tilesloaded", () => {
+          if (!cancelled) {
+            setMapOverviewMapReady(true);
+          }
+        });
         mapOverviewMarkersRef.current.forEach((marker) => marker.setMap(null));
         mapOverviewMarkersRef.current = [];
 
@@ -5913,7 +5936,27 @@ export default function App() {
                 </button>
               </div>
               <div className="map-overview-body">
-                <div ref={mapOverviewMapRef} className="map-overview-google-map" />
+                <iframe
+                  className="map-overview-frame"
+                  title="Tagged model overview map fallback"
+                  src={getGoogleDefaultMapUrl(
+                    mapOverviewBounds.centerLat,
+                    mapOverviewBounds.centerLon,
+                    mapOverviewBounds.zoom
+                  )}
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+                {locationModels.length > 0 ? (
+                  <img className="map-overview-fallback" src={mapOverviewFallbackUrl} alt="" />
+                ) : null}
+                <div
+                  ref={mapOverviewMapRef}
+                  className={`map-overview-google-map${mapOverviewMapReady ? " ready" : ""}`}
+                />
+                {!mapOverviewMapReady && !mapOverviewError ? (
+                  <div className="map-overview-loading">Loading interactive map</div>
+                ) : null}
                 {mapOverviewError ? <div className="map-overview-error">{mapOverviewError}</div> : null}
                 {hoveredMapModel ? (
                   <div className="map-overview-preview">
