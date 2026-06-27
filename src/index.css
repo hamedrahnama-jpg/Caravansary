@@ -801,12 +801,6 @@ h1 {
   font-weight: 800;
 }
 
-.map-overview-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .map-overview-header button {
   display: grid;
   width: 30px;
@@ -822,14 +816,7 @@ h1 {
 .map-overview-body {
   position: relative;
   min-height: 0;
-  background: #dce6df;
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-}
-
-.map-overview-body:active {
-  cursor: grabbing;
+  background: #d8caa2;
 }
 
 .map-overview-fallback,
@@ -858,7 +845,7 @@ h1 {
   place-items: center;
   border: 2px solid #ffffff;
   border-radius: 999px;
-  background: #c9473d;
+  background: #7f1d1d;
   box-shadow: 0 4px 12px rgba(23, 32, 36, 0.32);
   cursor: pointer;
   transform: translate(-50%, -50%);
@@ -867,7 +854,7 @@ h1 {
 .map-overview-pin:hover,
 .map-overview-pin:focus-visible {
   outline: 0;
-  background: #8e2f2a;
+  background: #5f1414;
   transform: translate(-50%, -50%) scale(1.18);
 }
 

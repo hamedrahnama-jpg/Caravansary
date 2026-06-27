@@ -463,15 +463,15 @@ function getGoogleStaticMapUrl(lat, lon, zoom) {
   return `/api/static-map?${params.toString()}`;
 }
 
-function getGoogleOverviewMapUrl(models, view, size) {
+function getGoogleOverviewMapUrl(models, bounds, size) {
   const points = models
     .map((model) => `${asNumber(model.lat, 0)},${asNumber(model.lon, 0)}`)
     .join("|");
   return `/api/overview-map?${new URLSearchParams({
     points,
-    lat: String(view.lat),
-    lon: String(view.lon),
-    zoom: String(view.zoom),
+    lat: String(bounds.centerLat),
+    lon: String(bounds.centerLon),
+    zoom: String(bounds.zoom),
     width: String(size.width),
     height: String(size.height)
   }).toString()}`;
@@ -525,16 +525,9 @@ function getMercatorPoint(lat, lon) {
   };
 }
 
-function getLatLonFromMercatorPoint(point) {
-  const lon = (point.x / 256 - 0.5) * 360;
-  const n = Math.PI - (2 * Math.PI * point.y) / 256;
-  const lat = THREE.MathUtils.radToDeg(Math.atan(Math.sinh(n)));
-  return { lat, lon };
-}
-
-function getMapOverviewPinStyle(model, view, size) {
-  const zoomScale = 2 ** Math.round(THREE.MathUtils.clamp(asNumber(view.zoom, 5), 1, 21));
-  const center = getMercatorPoint(view.lat, view.lon);
+function getMapOverviewPinStyle(model, bounds, size) {
+  const zoomScale = 2 ** Math.round(THREE.MathUtils.clamp(asNumber(bounds.zoom, 5), 1, 21));
+  const center = getMercatorPoint(bounds.centerLat, bounds.centerLon);
   const point = getMercatorPoint(asNumber(model.lat, 0), asNumber(model.lon, 0));
   const x = (point.x - center.x) * zoomScale + size.width / 2;
   const y = (point.y - center.y) * zoomScale + size.height / 2;
@@ -1657,7 +1650,6 @@ export default function App() {
   const floorRef = useRef(null);
   const gridRef = useRef(null);
   const stageMapRef = useRef({ mesh: null, material: null, texture: null });
-  const mapOverviewDragRef = useRef(null);
   const dragRef = useRef({
     active: false,
     object: null,
@@ -1707,7 +1699,6 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState(null);
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
   const [mapOverviewOpen, setMapOverviewOpen] = useState(false);
-  const [mapOverviewView, setMapOverviewView] = useState({ lat: 33, lon: 54, zoom: 5 });
   const [mapOverviewSize, setMapOverviewSize] = useState({ width: 640, height: 360 });
   const [hoveredMapModelId, setHoveredMapModelId] = useState(null);
   const [mapStageVisible, setMapStageVisible] = useState(false);
@@ -1743,16 +1734,16 @@ export default function App() {
     [hoveredMapModelId, locationModels]
   );
   const mapOverviewFallbackUrl = useMemo(
-    () => getGoogleOverviewMapUrl(locationModels, mapOverviewView, mapOverviewSize),
-    [locationModels, mapOverviewView, mapOverviewSize]
+    () => getGoogleOverviewMapUrl(locationModels, mapOverviewBounds, mapOverviewSize),
+    [locationModels, mapOverviewBounds, mapOverviewSize]
   );
   const mapOverviewPins = useMemo(
     () =>
       locationModels.map((model) => ({
         model,
-        style: getMapOverviewPinStyle(model, mapOverviewView, mapOverviewSize)
+        style: getMapOverviewPinStyle(model, mapOverviewBounds, mapOverviewSize)
       })),
-    [locationModels, mapOverviewView, mapOverviewSize]
+    [locationModels, mapOverviewBounds, mapOverviewSize]
   );
 
   const requestSceneRender = useCallback(() => {
@@ -1888,16 +1879,6 @@ export default function App() {
   }, [modules]);
 
   useEffect(() => {
-    if (!mapOverviewOpen) return undefined;
-    setMapOverviewView({
-      lat: mapOverviewBounds.centerLat,
-      lon: mapOverviewBounds.centerLon,
-      zoom: mapOverviewBounds.zoom
-    });
-    return undefined;
-  }, [mapOverviewOpen, mapOverviewBounds]);
-
-  useEffect(() => {
     const element = mapOverviewBodyRef.current;
     if (!mapOverviewOpen || !element) return undefined;
 
@@ -1917,58 +1898,6 @@ export default function App() {
     observer.observe(element);
     return () => observer.disconnect();
   }, [mapOverviewOpen]);
-
-  const zoomMapOverview = useCallback((delta) => {
-    setMapOverviewView((current) => ({
-      ...current,
-      zoom: THREE.MathUtils.clamp(Math.round(asNumber(current.zoom, 5) + delta), 1, 21)
-    }));
-  }, []);
-
-  const handleMapOverviewPointerDown = useCallback((event) => {
-    if (event.button !== 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    mapOverviewDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      rectWidth: rect.width,
-      rectHeight: rect.height,
-      view: { ...mapOverviewView }
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }, [mapOverviewView]);
-
-  const handleMapOverviewPointerMove = useCallback((event) => {
-    const drag = mapOverviewDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const zoomScale = 2 ** Math.round(THREE.MathUtils.clamp(asNumber(drag.view.zoom, 5), 1, 21));
-    const center = getMercatorPoint(drag.view.lat, drag.view.lon);
-    const dx = ((event.clientX - drag.startX) / Math.max(1, drag.rectWidth)) * mapOverviewSize.width;
-    const dy = ((event.clientY - drag.startY) / Math.max(1, drag.rectHeight)) * mapOverviewSize.height;
-    const next = getLatLonFromMercatorPoint({
-      x: center.x - dx / zoomScale,
-      y: center.y - dy / zoomScale
-    });
-    setMapOverviewView({
-      lat: THREE.MathUtils.clamp(next.lat, -85, 85),
-      lon: ((((next.lon + 180) % 360) + 360) % 360) - 180,
-      zoom: drag.view.zoom
-    });
-  }, [mapOverviewSize]);
-
-  const handleMapOverviewPointerUp = useCallback((event) => {
-    const drag = mapOverviewDragRef.current;
-    if (drag?.pointerId === event.pointerId) {
-      mapOverviewDragRef.current = null;
-    }
-  }, []);
-
-  const handleMapOverviewWheel = useCallback((event) => {
-    event.stopPropagation();
-    event.preventDefault();
-    zoomMapOverview(event.deltaY > 0 ? -1 : 1);
-  }, [zoomMapOverview]);
 
   useEffect(() => {
     const canvas = mapOverviewPreviewCanvasRef.current;
@@ -5939,26 +5868,13 @@ export default function App() {
                   <strong>Tagged Models</strong>
                   <span>{locationModels.length} locations</span>
                 </div>
-                <div className="map-overview-header-actions">
-                  <button type="button" onClick={() => zoomMapOverview(-1)} aria-label="Zoom overview map out">
-                    -
-                  </button>
-                  <button type="button" onClick={() => zoomMapOverview(1)} aria-label="Zoom overview map in">
-                    +
-                  </button>
-                  <button type="button" onClick={() => setMapOverviewOpen(false)} aria-label="Close map overview">
-                    <X size={16} aria-hidden="true" />
-                  </button>
-                </div>
+                <button type="button" onClick={() => setMapOverviewOpen(false)} aria-label="Close map overview">
+                  <X size={16} aria-hidden="true" />
+                </button>
               </div>
               <div
                 ref={mapOverviewBodyRef}
                 className="map-overview-body"
-                onPointerDown={handleMapOverviewPointerDown}
-                onPointerMove={handleMapOverviewPointerMove}
-                onPointerUp={handleMapOverviewPointerUp}
-                onPointerCancel={handleMapOverviewPointerUp}
-                onWheel={handleMapOverviewWheel}
               >
                 {locationModels.length > 0 ? (
                   <>

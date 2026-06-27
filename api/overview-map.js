@@ -36,6 +36,21 @@ export default async function handler(request, response) {
   if (Number.isFinite(zoom)) {
     params.set("zoom", String(Math.max(1, Math.min(21, Math.round(zoom)))));
   }
+  [
+    "feature:all|element:geometry|color:0xd8caa2",
+    "feature:all|element:labels.text.fill|color:0x4a3b2b",
+    "feature:all|element:labels.text.stroke|color:0xf0ead8",
+    "feature:administrative|element:geometry.stroke|color:0x8d8062",
+    "feature:landscape.natural|element:geometry|color:0xd8caa2",
+    "feature:poi|visibility:off",
+    "feature:transit|visibility:off",
+    "feature:road|element:geometry|color:0xc97824",
+    "feature:road|element:geometry.stroke|color:0x8e4f17",
+    "feature:road.highway|element:geometry|color:0xb85f18",
+    "feature:road.local|element:geometry|color:0xd89645",
+    "feature:road|element:labels.text.fill|color:0x5a3214",
+    "feature:water|element:geometry|color:0xb9c7b3"
+  ].forEach((style) => params.append("style", style));
 
   const googleResponse = await fetch(`https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`);
   if (!googleResponse.ok) {
