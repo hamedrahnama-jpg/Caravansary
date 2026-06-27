@@ -686,10 +686,10 @@ h1 {
 
 .map-guide-controls {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
   padding: 6px;
-  border-top: 1px solid #d8dfdc;
+  border: 1px solid #b8c4be;
+  border-radius: 7px;
   background: #d7dfda;
 }
 
@@ -721,12 +721,14 @@ h1 {
   background: #ffffff;
 }
 
-.map-guide-controls .map-name-field {
-  grid-column: 1 / 3;
+.map-guide-coordinate-row,
+.map-guide-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
 }
 
-.map-guide-controls button {
-  align-self: end;
+.map-guide-actions button {
   min-height: 27px;
   border: 1px solid #38535a;
   border-radius: 7px;
@@ -736,7 +738,7 @@ h1 {
   font-weight: 900;
 }
 
-.map-guide-controls button.active {
+.map-guide-actions button.active {
   border-color: #172024;
   background: #172024;
 }
@@ -1368,13 +1370,10 @@ h1 {
   }
 
   .map-guide-controls {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 5px;
     padding: 6px;
     overflow: visible;
     background: #cfd8d2;
-    border: 1px solid #b8c4be;
-    border-radius: 7px;
   }
 
   .map-guide-controls label {
@@ -1382,14 +1381,18 @@ h1 {
   }
 
   .map-guide-controls input,
-  .map-guide-controls button {
+  .map-guide-actions button {
     height: 26px;
     min-height: 26px;
     font-size: 0.66rem;
   }
 
-  .map-guide-controls .map-name-field {
-    grid-column: 1 / -1;
+  .map-guide-coordinate-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .map-guide-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .map-guide-controls .map-secondary-action {

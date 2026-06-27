@@ -5830,35 +5830,6 @@ export default function App() {
               </div>
               <div className="map-list-scroll">
                 <div className="map-guide-controls">
-                  <label>
-                    Lat
-                    <input
-                      type="number"
-                      step="0.000001"
-                      value={mapLat}
-                      onChange={(event) => setMapLat(asNumber(event.target.value, 0))}
-                    />
-                  </label>
-                  <label>
-                    Lon
-                    <input
-                      type="number"
-                      step="0.000001"
-                      value={mapLon}
-                      onChange={(event) => setMapLon(asNumber(event.target.value, 0))}
-                    />
-                  </label>
-                  <label>
-                    Zoom
-                    <input
-                      type="number"
-                      min="1"
-                      max="21"
-                      step="1"
-                      value={mapZoom}
-                      onChange={(event) => setMapZoom(THREE.MathUtils.clamp(asNumber(event.target.value, 18), 1, 21))}
-                    />
-                  </label>
                   <label className="map-name-field">
                     Name
                     <input
@@ -5867,23 +5838,58 @@ export default function App() {
                       onChange={(event) => setLocationModelName(event.target.value)}
                     />
                   </label>
-                  <button type="button" onClick={() => void saveCurrentModelToLocation()}>
-                    Tag
-                  </button>
-                  <button
-                    type="button"
-                    className={`map-secondary-action${mapStageVisible ? " active" : ""}`}
-                    onClick={() => setMapStageVisible((current) => !current)}
-                  >
-                    Stage
-                  </button>
-                  <button
-                    type="button"
-                    className={`map-secondary-action${mapOverviewOpen ? " active" : ""}`}
-                    onClick={() => setMapOverviewOpen(true)}
-                  >
-                    View
-                  </button>
+                  <div className="map-guide-coordinate-row">
+                    <label>
+                      Lat
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={mapLat}
+                        onChange={(event) => setMapLat(asNumber(event.target.value, 0))}
+                      />
+                    </label>
+                    <label>
+                      Lon
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={mapLon}
+                        onChange={(event) => setMapLon(asNumber(event.target.value, 0))}
+                      />
+                    </label>
+                    <label>
+                      Zoom
+                      <input
+                        type="number"
+                        min="1"
+                        max="21"
+                        step="1"
+                        value={mapZoom}
+                        onChange={(event) =>
+                          setMapZoom(THREE.MathUtils.clamp(asNumber(event.target.value, 18), 1, 21))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="map-guide-actions">
+                    <button type="button" onClick={() => void saveCurrentModelToLocation()}>
+                      Tag
+                    </button>
+                    <button
+                      type="button"
+                      className={`map-secondary-action${mapStageVisible ? " active" : ""}`}
+                      onClick={() => setMapStageVisible((current) => !current)}
+                    >
+                      Stage
+                    </button>
+                    <button
+                      type="button"
+                      className={`map-secondary-action${mapOverviewOpen ? " active" : ""}`}
+                      onClick={() => setMapOverviewOpen(true)}
+                    >
+                      View
+                    </button>
+                  </div>
                 </div>
                 <div className="map-model-list">
                   {locationModels.length === 0 ? (
