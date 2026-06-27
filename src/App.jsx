@@ -121,6 +121,7 @@ const EXPORT_RENDER_STYLES = {
 
 const loader = new GLTFLoader();
 const assetCache = new Map();
+let googleMapsScriptPromise = null;
 const MODULE_STORAGE_KEY = "caravansary.modules.v1";
 const MODEL_LOCATIONS_STORAGE_KEY = "caravansary.locationModels.v1";
 const MODULE_DB_NAME = "caravansary-module-assets";
@@ -371,6 +372,20 @@ function getRuntimeModule(module) {
   return module;
 }
 
+async function getRuntimeModuleWithAsset(module) {
+  const runtimeModule = getRuntimeModule(module);
+  if (!runtimeModule?.assetKey || runtimeModule.url || runtimeModule.assetPath) {
+    return runtimeModule;
+  }
+
+  try {
+    const blob = await loadUploadedAsset(runtimeModule.assetKey);
+    return blob ? { ...runtimeModule, url: URL.createObjectURL(blob) } : runtimeModule;
+  } catch {
+    return runtimeModule;
+  }
+}
+
 function loadLocalLocationModels() {
   try {
     const saved = window.localStorage.getItem(MODEL_LOCATIONS_STORAGE_KEY);
@@ -437,6 +452,35 @@ function getGoogleSatelliteUrl(lat, lon, zoom) {
   return `https://maps.google.com/maps?q=${safeLat},${safeLon}&z=${safeZoom}&t=k&output=embed`;
 }
 
+async function getGoogleMapsApiKey() {
+  const envKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (envKey) return envKey;
+  const response = await fetch("/api/maps-key");
+  if (!response.ok) throw new Error("Missing Google Maps key");
+  const data = await response.json();
+  if (!data?.key) throw new Error("Missing Google Maps key");
+  return data.key;
+}
+
+async function loadGoogleMapsApi() {
+  if (window.google?.maps) return window.google.maps;
+  if (!googleMapsScriptPromise) {
+    googleMapsScriptPromise = getGoogleMapsApiKey().then(
+      (apiKey) =>
+        new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = `https://maps.googleapis.com/maps/api/js?${new URLSearchParams({ key: apiKey }).toString()}`;
+          script.async = true;
+          script.defer = true;
+          script.onload = () => resolve(window.google.maps);
+          script.onerror = () => reject(new Error("Google Maps failed to load"));
+          document.head.appendChild(script);
+        })
+    );
+  }
+  return googleMapsScriptPromise;
+}
+
 function getGoogleStaticMapUrl(lat, lon, zoom) {
   const safeLat = asNumber(lat, 0);
   const safeLon = asNumber(lon, 0);
@@ -447,6 +491,46 @@ function getGoogleStaticMapUrl(lat, lon, zoom) {
     zoom: String(safeZoom)
   });
   return `/api/static-map?${params.toString()}`;
+}
+
+function getTaggedMapBounds(models) {
+  const points = models
+    .map((model) => ({ lat: asNumber(model.lat, 0), lon: asNumber(model.lon, 0) }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon));
+  if (points.length === 0) {
+    return {
+      minLat: 24,
+      maxLat: 42,
+      minLon: 44,
+      maxLon: 64,
+      centerLat: 33,
+      centerLon: 54,
+      zoom: 5
+    };
+  }
+
+  let minLat = Math.min(...points.map((point) => point.lat));
+  let maxLat = Math.max(...points.map((point) => point.lat));
+  let minLon = Math.min(...points.map((point) => point.lon));
+  let maxLon = Math.max(...points.map((point) => point.lon));
+  const latPad = Math.max((maxLat - minLat) * 0.18, 0.02);
+  const lonPad = Math.max((maxLon - minLon) * 0.18, 0.02);
+  minLat -= latPad;
+  maxLat += latPad;
+  minLon -= lonPad;
+  maxLon += lonPad;
+  const spread = Math.max(maxLat - minLat, maxLon - minLon);
+  const zoom = spread > 20 ? 3 : spread > 10 ? 4 : spread > 5 ? 5 : spread > 2 ? 6 : spread > 0.8 ? 8 : 10;
+
+  return {
+    minLat,
+    maxLat,
+    minLon,
+    maxLon,
+    centerLat: (minLat + maxLat) / 2,
+    centerLon: (minLon + maxLon) / 2,
+    zoom
+  };
 }
 
 function downloadBlob(filename, blob) {
@@ -572,7 +656,7 @@ function getVisibleVerticalFaceSegments(object) {
   return segments;
 }
 
-function getVerticalFaceSnapDelta(movingSegment, targetSegment) {
+function getVerticalFaceSnapDelta(movingSegment, targetSegment, maxDistance = EDGE_SNAP_DISTANCE) {
   const parallel = Math.abs(movingSegment.direction.dot(targetSegment.direction));
   if (parallel < 0.985) return null;
 
@@ -584,7 +668,7 @@ function getVerticalFaceSnapDelta(movingSegment, targetSegment) {
 
   const signedDistance = movingSegment.start.clone().sub(targetSegment.start).dot(targetSegment.normal);
   const normalDistance = Math.abs(signedDistance);
-  if (normalDistance > EDGE_SNAP_DISTANCE) return null;
+  if (normalDistance > maxDistance) return null;
 
   const edgeAlignmentCandidates = [
     targetMin - movingSegment.min,
@@ -593,7 +677,7 @@ function getVerticalFaceSnapDelta(movingSegment, targetSegment) {
     targetMax - movingSegment.min
   ]
     .map((value) => ({ value, distance: Math.abs(value) }))
-    .filter((candidate) => candidate.distance <= EDGE_SNAP_DISTANCE)
+    .filter((candidate) => candidate.distance <= maxDistance)
     .sort((a, b) => a.distance - b.distance);
 
   const hasFaceContact = overlap > 0.08;
@@ -605,7 +689,7 @@ function getVerticalFaceSnapDelta(movingSegment, targetSegment) {
     ? movingSegment.direction.clone().multiplyScalar(bestEdgeAlignment.value)
     : new THREE.Vector2(0, 0);
   const alignedOverlap = Math.max(0, overlap);
-  const edgeDistance = bestEdgeAlignment?.distance ?? EDGE_SNAP_DISTANCE;
+  const edgeDistance = bestEdgeAlignment?.distance ?? maxDistance;
   const score = normalDistance * 0.45 + edgeDistance * 0.08 - alignedOverlap * 0.04;
   return {
     distance: score,
@@ -1525,6 +1609,8 @@ function updateSelectionBoxHelper(helper, object) {
 export default function App() {
   const canvasRef = useRef(null);
   const previewCanvasRef = useRef(null);
+  const mapOverviewPreviewCanvasRef = useRef(null);
+  const mapOverviewMapRef = useRef(null);
   const sectionCanvasRef = useRef(null);
   const sceneRef = useRef(null);
   const previewSceneRef = useRef(null);
@@ -1558,6 +1644,8 @@ export default function App() {
   const floorRef = useRef(null);
   const gridRef = useRef(null);
   const stageMapRef = useRef({ mesh: null, material: null, texture: null });
+  const mapOverviewInstanceRef = useRef(null);
+  const mapOverviewMarkersRef = useRef([]);
   const dragRef = useRef({
     active: false,
     object: null,
@@ -1577,6 +1665,7 @@ export default function App() {
   const importDesignInputRef = useRef(null);
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
+  const openLocationModelRef = useRef(null);
   const [activeView, setActiveView] = useState("builder");
   const [modules, setModules] = useState(loadSavedModules);
   const [styleKey] = useState("stone");
@@ -1584,8 +1673,8 @@ export default function App() {
   const [exportBackgroundColor, setExportBackgroundColor] = useState(STYLES.heritage.background);
   const [exportStageColor, setExportStageColor] = useState(STYLES.heritage.ground);
   const [edgeColor, setEdgeColor] = useState("#b28d2a");
-  const [edgeThickness, setEdgeThickness] = useState(2);
-  const [exportSeamlessSolid, setExportSeamlessSolid] = useState(true);
+  const [edgeThickness, setEdgeThickness] = useState(1);
+  const [exportSeamlessSolid, setExportSeamlessSolid] = useState(false);
   const [exportMode, setExportMode] = useState("heritage");
   const [exportFormat, setExportFormat] = useState("png");
   const [exportQuality, setExportQuality] = useState("high");
@@ -1605,6 +1694,9 @@ export default function App() {
   const [selectedPlacedIds, setSelectedPlacedIds] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
+  const [mapOverviewOpen, setMapOverviewOpen] = useState(false);
+  const [mapOverviewError, setMapOverviewError] = useState("");
+  const [hoveredMapModelId, setHoveredMapModelId] = useState(null);
   const [mapStageVisible, setMapStageVisible] = useState(false);
   const [mobileModulePanelOpen, setMobileModulePanelOpen] = useState(false);
   const [mobileRibbonOpen, setMobileRibbonOpen] = useState(false);
@@ -1631,6 +1723,10 @@ export default function App() {
   const editing = useMemo(
     () => modules.find((module) => module.id === editingModule) ?? modules[0],
     [editingModule, modules]
+  );
+  const hoveredMapModel = useMemo(
+    () => locationModels.find((model) => model.id === hoveredMapModelId) ?? null,
+    [hoveredMapModelId, locationModels]
   );
 
   const requestSceneRender = useCallback(() => {
@@ -1764,6 +1860,170 @@ export default function App() {
       cancelled = true;
     };
   }, [modules]);
+
+  useEffect(() => {
+    const canvas = mapOverviewPreviewCanvasRef.current;
+    const design = hoveredMapModel?.design;
+    if (!canvas || !design || !Array.isArray(design.placed) || design.placed.length === 0) return undefined;
+
+    let disposed = false;
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#eef4f0");
+    scene.add(new THREE.AmbientLight("#ffffff", 2.4));
+    const light = new THREE.DirectionalLight("#ffffff", 1.2);
+    light.position.set(4, 8, 6);
+    scene.add(light);
+    const group = new THREE.Group();
+    scene.add(group);
+
+    async function renderHoveredModelPreview() {
+      const style = STYLES[styleKey];
+      const designModules = await Promise.all((design.modules ?? []).map(getRuntimeModuleWithAsset));
+      const designModuleById = new Map(designModules.map((module) => [module.id, module]));
+
+      for (const savedItem of design.placed) {
+        if (disposed) return;
+        const savedRuntimeModule = savedItem.module ? await getRuntimeModuleWithAsset(savedItem.module) : null;
+        const baseModule = designModuleById.get(savedItem.moduleId) ?? savedRuntimeModule;
+        if (!baseModule) continue;
+        const module = savedItem.colorOverride ? { ...baseModule, color: savedItem.colorOverride } : baseModule;
+        const mesh = module.url
+          ? await createAssetModuleMesh(module, style)
+          : createPlaceholderModuleMesh(module, style);
+        if (disposed) {
+          disposeObject(mesh);
+          return;
+        }
+        const position = savedItem.position ?? [0, 0, 0];
+        mesh.position.set(position[0] ?? 0, position[1] ?? 0, position[2] ?? 0);
+        mesh.rotation.y = savedItem.rotationY ?? 0;
+        mesh.scale.multiplyScalar(savedItem.instanceScale ?? 1);
+        applyExportEdges(mesh, style, { color: edgeColor, thickness: edgeThickness });
+        group.add(mesh);
+      }
+
+      if (disposed) return;
+      const width = Math.max(1, canvas.clientWidth);
+      const height = Math.max(1, canvas.clientHeight);
+      renderer.setSize(width, height, false);
+      const box = new THREE.Box3().setFromObject(group);
+      if (box.isEmpty()) {
+        renderer.render(scene, new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10));
+        return;
+      }
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxSize = Math.max(size.x, size.z, 1);
+      const viewHeight = maxSize / 0.82;
+      const viewWidth = viewHeight * (width / height);
+      const camera = new THREE.OrthographicCamera(
+        -viewWidth / 2,
+        viewWidth / 2,
+        viewHeight / 2,
+        -viewHeight / 2,
+        0.1,
+        Math.max(100, size.y + maxSize * 4)
+      );
+      camera.position.set(center.x, box.max.y + maxSize * 2, center.z);
+      camera.up.set(0, 0, -1);
+      camera.lookAt(center.x, center.y, center.z);
+      camera.updateProjectionMatrix();
+      renderer.render(scene, camera);
+    }
+
+    renderHoveredModelPreview().catch(() => {
+      if (!disposed) {
+        renderer.clear();
+      }
+    });
+
+    return () => {
+      disposed = true;
+      group.children.forEach((child) => disposeObject(child));
+      group.clear();
+      renderer.dispose();
+    };
+  }, [hoveredMapModel, styleKey, edgeColor, edgeThickness]);
+
+  useEffect(() => {
+    const container = mapOverviewMapRef.current;
+    if (!mapOverviewOpen || !container) return undefined;
+
+    let cancelled = false;
+    setMapOverviewError("");
+
+    async function renderTaggedMapOverview() {
+      try {
+        const googleMaps = await loadGoogleMapsApi();
+        if (cancelled) return;
+
+        const bounds = getTaggedMapBounds(locationModels);
+        const map =
+          mapOverviewInstanceRef.current ??
+          new googleMaps.Map(container, {
+            center: { lat: bounds.centerLat, lng: bounds.centerLon },
+            zoom: bounds.zoom,
+            mapTypeId: "roadmap",
+            fullscreenControl: false,
+            streetViewControl: false,
+            mapTypeControl: false
+          });
+
+        mapOverviewInstanceRef.current = map;
+        map.setMapTypeId("roadmap");
+        mapOverviewMarkersRef.current.forEach((marker) => marker.setMap(null));
+        mapOverviewMarkersRef.current = [];
+
+        if (locationModels.length === 0) {
+          map.setCenter({ lat: bounds.centerLat, lng: bounds.centerLon });
+          map.setZoom(bounds.zoom);
+          return;
+        }
+
+        const googleBounds = new googleMaps.LatLngBounds();
+        locationModels.forEach((model) => {
+          const position = { lat: asNumber(model.lat, 0), lng: asNumber(model.lon, 0) };
+          googleBounds.extend(position);
+          const marker = new googleMaps.Marker({
+            map,
+            position,
+            title: model.name,
+            icon: {
+              path: googleMaps.SymbolPath.CIRCLE,
+              scale: 7,
+              fillColor: "#c9473d",
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2
+            }
+          });
+          marker.addListener("mouseover", () => setHoveredMapModelId(model.id));
+          marker.addListener("mouseout", () => setHoveredMapModelId((current) => (current === model.id ? null : current)));
+          marker.addListener("click", () => void openLocationModelRef.current?.(model));
+          mapOverviewMarkersRef.current.push(marker);
+        });
+
+        if (locationModels.length === 1) {
+          map.setCenter(googleBounds.getCenter());
+          map.setZoom(locationModels[0].zoom ?? 14);
+        } else {
+          map.fitBounds(googleBounds, 72);
+        }
+      } catch {
+        if (!cancelled) {
+          setMapOverviewError("Google Maps API key is missing or unavailable.");
+        }
+      }
+    }
+
+    void renderTaggedMapOverview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapOverviewOpen, locationModels]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2565,7 +2825,7 @@ export default function App() {
     void placeModule(module, 0, 0);
   }
 
-  function snapMeshToObjectEdges(mesh) {
+  function snapMeshToObjectEdges(mesh, { maxDistance = EDGE_SNAP_DISTANCE } = {}) {
     for (let pass = 0; pass < 2; pass += 1) {
       const movingSegments = getVisibleVerticalFaceSegments(mesh);
       let bestSnap = null;
@@ -2575,7 +2835,7 @@ export default function App() {
         const targetSegments = getVisibleVerticalFaceSegments(item.mesh);
         movingSegments.forEach((movingSegment) => {
           targetSegments.forEach((targetSegment) => {
-            const candidate = getVerticalFaceSnapDelta(movingSegment, targetSegment);
+            const candidate = getVerticalFaceSnapDelta(movingSegment, targetSegment, maxDistance);
             if (
               candidate &&
               (!bestSnap ||
@@ -2840,6 +3100,11 @@ export default function App() {
         rotation,
         scale: modelScale
       },
+      render: {
+        edgeColor,
+        edgeThickness,
+        seamlessSolid: exportSeamlessSolid
+      },
       modules: modules.map(getStoredModuleSnapshot),
       placed: placedRef.current.map((item) => ({
         moduleId: item.module.id,
@@ -2869,9 +3134,9 @@ export default function App() {
     updateHistoryCounts();
   }
 
-  async function restoreDesignSnapshot(snapshot) {
+  async function restoreDesignSnapshot(snapshot, { frameModel = false } = {}) {
     if (Array.isArray(snapshot?.modules) && snapshot.modules.length > 0) {
-      const runtimeModules = snapshot.modules.map(getRuntimeModule);
+      const runtimeModules = await Promise.all(snapshot.modules.map(getRuntimeModuleWithAsset));
       setModules(runtimeModules);
       setSelectedModule((current) =>
         runtimeModules.some((module) => module.id === current) ? current : runtimeModules[0].id
@@ -2881,6 +3146,9 @@ export default function App() {
       );
     }
     await addDesignToStage(snapshot, { clearCurrent: true, recordHistory: false });
+    if (frameModel) {
+      frameWholeModelInView(0.9);
+    }
     updateHistoryCounts();
   }
 
@@ -2927,6 +3195,8 @@ export default function App() {
     if (recordHistory) {
       pushUndoSnapshot();
     }
+    const restoredEdgeColor = clearCurrent && typeof design.render?.edgeColor === "string" ? design.render.edgeColor : edgeColor;
+    const restoredEdgeThickness = clearCurrent ? Math.max(0, asNumber(design.render?.edgeThickness, 1)) : edgeThickness;
     if (clearCurrent) {
       clearDesign({ recordHistory: false });
       if (design.section) {
@@ -2941,19 +3211,32 @@ export default function App() {
         setRotation(THREE.MathUtils.clamp(asNumber(design.transform.rotation, 0), -180, 180));
         setModelScale(THREE.MathUtils.clamp(asNumber(design.transform.scale, 1), 0.05, 10));
       }
+      setEdgeColor(restoredEdgeColor);
+      setEdgeThickness(restoredEdgeThickness);
+      setExportSeamlessSolid(Boolean(design.render?.seamlessSolid));
     }
 
     const style = STYLES[styleKey];
     const nextItems = [];
-    const designModules = (design.modules ?? []).map(getRuntimeModule);
+    const designModules = await Promise.all((design.modules ?? []).map(getRuntimeModuleWithAsset));
     const designModuleById = new Map(designModules.map((module) => [module.id, module]));
     const moduleById = new Map(modules.map((module) => [module.id, module]));
+    if (clearCurrent && designModules.length > 0) {
+      setModules(designModules);
+      setSelectedModule((current) =>
+        designModules.some((module) => module.id === current) ? current : designModules[0].id
+      );
+      setEditingModule((current) =>
+        designModules.some((module) => module.id === current) ? current : designModules[0].id
+      );
+    }
 
     for (const savedItem of design.placed) {
+      const savedRuntimeModule = savedItem.module ? await getRuntimeModuleWithAsset(savedItem.module) : null;
       const baseModule =
         designModuleById.get(savedItem.moduleId) ??
         moduleById.get(savedItem.moduleId) ??
-        getRuntimeModule(savedItem.module);
+        savedRuntimeModule;
       if (!baseModule) continue;
 
       const module = savedItem.colorOverride ? { ...baseModule, color: savedItem.colorOverride } : baseModule;
@@ -2975,7 +3258,7 @@ export default function App() {
       mesh.rotation.y = item.rotationY;
       mesh.scale.multiplyScalar(item.instanceScale);
       mesh.userData.itemId = id;
-      applyExportEdges(mesh, style, { color: edgeColor, thickness: edgeThickness });
+      applyExportEdges(mesh, style, { color: restoredEdgeColor, thickness: restoredEdgeThickness });
       modelGroupRef.current.add(mesh);
       nextItems.push(item);
     }
@@ -2995,6 +3278,7 @@ export default function App() {
       if (mode === "open") {
         setRotation(THREE.MathUtils.clamp(asNumber(design.transform?.rotation, 0), -180, 180));
         setModelScale(THREE.MathUtils.clamp(asNumber(design.transform?.scale, 1), 0.05, 10));
+        frameWholeModelInView(0.9);
       }
     } catch {
       setSaveStatus("Open failed");
@@ -3038,8 +3322,7 @@ export default function App() {
       setMapZoom(model.zoom ?? 18);
       setMapRefreshKey((current) => current + 1);
       setLocationModelName(model.name);
-      await restoreDesignSnapshot(model.design);
-      resetCamera();
+      await restoreDesignSnapshot(model.design, { frameModel: true });
       setSaveStatus(`Loaded ${model.name}`);
     } catch {
       setSaveStatus("Location load failed");
@@ -3155,6 +3438,41 @@ export default function App() {
     walkHeightRef.current = 1.65;
     controlsRef.current.object.position.set(18, 16, 20);
     controlsRef.current.target.set(0, 0, 0);
+    controlsRef.current.update();
+    requestSceneRender();
+  }
+
+  function frameWholeModelInView(fillRatio = 0.9) {
+    if (placedRef.current.length === 0 || !controlsRef.current) {
+      resetCamera();
+      return;
+    }
+    const box = new THREE.Box3();
+    placedRef.current.forEach((item) => {
+      box.union(getObjectBox(item.mesh));
+    });
+    if (box.isEmpty()) {
+      resetCamera();
+      return;
+    }
+
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const radius = Math.max(size.length() * 0.5, 1);
+    const camera = controlsRef.current.object;
+    const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+    const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+    const fov = Math.min(verticalFov, horizontalFov);
+    const distance = radius / Math.sin(fov * Math.max(0.1, Math.min(fillRatio, 0.95)) * 0.5);
+    const viewDirection = new THREE.Vector3(1, 0.78, 1).normalize();
+
+    setWalkMode(false);
+    walkHeightRef.current = 1.65;
+    camera.position.copy(center).addScaledVector(viewDirection, distance);
+    camera.near = Math.max(0.01, distance / 1000);
+    camera.far = Math.max(2000, distance * 8);
+    camera.updateProjectionMatrix();
+    controlsRef.current.target.copy(center);
     controlsRef.current.update();
     requestSceneRender();
   }
@@ -4494,6 +4812,7 @@ export default function App() {
     setMapGuideOpen(nextOpen);
     setMobileMapPanelOpen(nextOpen);
   };
+  openLocationModelRef.current = openLocationModel;
 
   return (
     <main className="designer-shell">
@@ -4511,15 +4830,16 @@ export default function App() {
         accept=".json,application/json"
         onChange={(event) => void handleDesignFile(event, "import")}
       />
-      {(mobileModulePanelOpen || mobileMapPanelOpen || mobileRibbonOpen) ? (
+      {(mobileModulePanelOpen || mobileMapPanelOpen || mobileRibbonOpen || mapOverviewOpen) ? (
         <button
           type="button"
           className="mobile-scrim"
-          aria-label="Close mobile panels"
+          aria-label="Close open panels"
           onClick={() => {
             setMobileModulePanelOpen(false);
             setMobileMapPanelOpen(false);
             setMobileRibbonOpen(false);
+            setMapOverviewOpen(false);
           }}
         />
       ) : null}
@@ -5509,6 +5829,13 @@ export default function App() {
                 >
                   Stage Map
                 </button>
+                <button
+                  type="button"
+                  className={mapOverviewOpen ? "active" : ""}
+                  onClick={() => setMapOverviewOpen(true)}
+                >
+                  Overview
+                </button>
               </div>
               <div className="map-model-list">
                 {locationModels.length === 0 ? (
@@ -5565,6 +5892,41 @@ export default function App() {
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+          ) : null}
+          {mapOverviewOpen ? (
+            <div
+              className="map-overview"
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerMove={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onWheel={(event) => event.stopPropagation()}
+            >
+              <div className="map-overview-header">
+                <div>
+                  <strong>Tagged Models</strong>
+                  <span>{locationModels.length} locations</span>
+                </div>
+                <button type="button" onClick={() => setMapOverviewOpen(false)} aria-label="Close map overview">
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="map-overview-body">
+                <div ref={mapOverviewMapRef} className="map-overview-google-map" />
+                {mapOverviewError ? <div className="map-overview-error">{mapOverviewError}</div> : null}
+                {hoveredMapModel ? (
+                  <div className="map-overview-preview">
+                    <strong>{hoveredMapModel.name}</strong>
+                    <span>
+                      {Number(asNumber(hoveredMapModel.lat, 0)).toFixed(4)},{" "}
+                      {Number(asNumber(hoveredMapModel.lon, 0)).toFixed(4)}
+                    </span>
+                    <div className="map-overview-model-preview">
+                      <canvas ref={mapOverviewPreviewCanvasRef} />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
