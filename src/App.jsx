@@ -125,7 +125,7 @@ const MODULE_STORAGE_KEY = "caravansary.modules.v1";
 const MODEL_LOCATIONS_STORAGE_KEY = "caravansary.locationModels.v1";
 const MODULE_DB_NAME = "caravansary-module-assets";
 const MODULE_DB_STORE = "assets";
-const EDGE_SNAP_DISTANCE = 0.55;
+const EDGE_SNAP_DISTANCE = 2.0;
 const EXPORT_QUALITY_OPTIONS = {
   standard: { label: "Standard", scale: 3, maxSide: 6000, shadowMapSize: 4096 },
   high: { label: "High", scale: 4, maxSide: 8192, shadowMapSize: 4096 },
@@ -604,11 +604,13 @@ function getVerticalFaceSnapDelta(movingSegment, targetSegment) {
   const edgeDelta = bestEdgeAlignment
     ? movingSegment.direction.clone().multiplyScalar(bestEdgeAlignment.value)
     : new THREE.Vector2(0, 0);
-  const score = normalDistance + (bestEdgeAlignment ? bestEdgeAlignment.distance * 0.35 : 0);
+  const alignedOverlap = Math.max(0, overlap);
+  const edgeDistance = bestEdgeAlignment?.distance ?? EDGE_SNAP_DISTANCE;
+  const score = normalDistance * 0.45 + edgeDistance * 0.08 - alignedOverlap * 0.04;
   return {
     distance: score,
     normalDistance,
-    edgeDistance: bestEdgeAlignment?.distance ?? Infinity,
+    edgeDistance,
     overlap,
     delta: normalDelta.add(edgeDelta)
   };
@@ -1594,7 +1596,7 @@ export default function App() {
   const [sectionYEnabled, setSectionYEnabled] = useState(false);
   const [sectionYOffset, setSectionYOffset] = useState(0);
   const [planSectionEnabled, setPlanSectionEnabled] = useState(false);
-  const [planSectionHeight, setPlanSectionHeight] = useState(1);
+  const [planSectionHeight, setPlanSectionHeight] = useState(0.5);
   const [walkMode, setWalkMode] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [modelScale, setModelScale] = useState(1);
@@ -2564,28 +2566,32 @@ export default function App() {
   }
 
   function snapMeshToObjectEdges(mesh) {
-    const movingSegments = getVisibleVerticalFaceSegments(mesh);
-    let bestSnap = null;
+    for (let pass = 0; pass < 2; pass += 1) {
+      const movingSegments = getVisibleVerticalFaceSegments(mesh);
+      let bestSnap = null;
 
-    placedRef.current.forEach((item) => {
-      if (item.mesh === mesh) return;
-      const targetSegments = getVisibleVerticalFaceSegments(item.mesh);
-      movingSegments.forEach((movingSegment) => {
-        targetSegments.forEach((targetSegment) => {
-          const candidate = getVerticalFaceSnapDelta(movingSegment, targetSegment);
-          if (
-            candidate &&
-            (!bestSnap ||
-              candidate.distance < bestSnap.distance ||
-              (candidate.distance === bestSnap.distance && candidate.overlap > bestSnap.overlap))
-          ) {
-            bestSnap = candidate;
-          }
+      placedRef.current.forEach((item) => {
+        if (item.mesh === mesh) return;
+        const targetSegments = getVisibleVerticalFaceSegments(item.mesh);
+        movingSegments.forEach((movingSegment) => {
+          targetSegments.forEach((targetSegment) => {
+            const candidate = getVerticalFaceSnapDelta(movingSegment, targetSegment);
+            if (
+              candidate &&
+              (!bestSnap ||
+                candidate.edgeDistance < bestSnap.edgeDistance * 0.72 ||
+                candidate.distance < bestSnap.distance ||
+                (candidate.distance === bestSnap.distance && candidate.overlap > bestSnap.overlap))
+            ) {
+              bestSnap = candidate;
+            }
+          });
         });
       });
-    });
 
-    if (bestSnap) {
+      if (!bestSnap || bestSnap.delta.length() <= 0.0001) {
+        break;
+      }
       mesh.position.x += bestSnap.delta.x;
       mesh.position.z += bestSnap.delta.y;
     }
@@ -2929,7 +2935,7 @@ export default function App() {
         setSectionYEnabled(Boolean(design.section.yEnabled, false));
         setSectionYOffset(asNumber(design.section.yOffset, 0));
         setPlanSectionEnabled(Boolean(design.section.planEnabled));
-        setPlanSectionHeight(asNumber(design.section.planHeight, 1));
+        setPlanSectionHeight(asNumber(design.section.planHeight, 0.5));
       }
       if (design.transform) {
         setRotation(THREE.MathUtils.clamp(asNumber(design.transform.rotation, 0), -180, 180));
@@ -4680,60 +4686,62 @@ export default function App() {
               Cast shadow
             </label>
 
-            <label className="export-shadow-toggle">
-              <input
-                type="checkbox"
-                checked={sectionXEnabled}
-                onChange={(event) => setSectionXEnabled(event.target.checked)}
-              />
-              X section
-            </label>
-            <label>
-              X section pos
-              <input
-                type="number"
-                step="0.25"
-                value={sectionXOffset}
-                onChange={(event) => setSectionXOffset(asNumber(event.target.value, 0))}
-              />
-            </label>
+            <div className="section-control-grid">
+              <label className="export-shadow-toggle">
+                <input
+                  type="checkbox"
+                  checked={sectionXEnabled}
+                  onChange={(event) => setSectionXEnabled(event.target.checked)}
+                />
+                X section
+              </label>
+              <label>
+                X section pos
+                <input
+                  type="number"
+                  step="0.25"
+                  value={sectionXOffset}
+                  onChange={(event) => setSectionXOffset(asNumber(event.target.value, 0))}
+                />
+              </label>
 
-            <label className="export-shadow-toggle">
-              <input
-                type="checkbox"
-                checked={sectionYEnabled}
-                onChange={(event) => setSectionYEnabled(event.target.checked)}
-              />
-              Y section
-            </label>
-            <label>
-              Y section pos
-              <input
-                type="number"
-                step="0.25"
-                value={sectionYOffset}
-                onChange={(event) => setSectionYOffset(asNumber(event.target.value, 0))}
-              />
-            </label>
+              <label className="export-shadow-toggle">
+                <input
+                  type="checkbox"
+                  checked={sectionYEnabled}
+                  onChange={(event) => setSectionYEnabled(event.target.checked)}
+                />
+                Y section
+              </label>
+              <label>
+                Y section pos
+                <input
+                  type="number"
+                  step="0.25"
+                  value={sectionYOffset}
+                  onChange={(event) => setSectionYOffset(asNumber(event.target.value, 0))}
+                />
+              </label>
 
-            <label className="export-shadow-toggle">
-              <input
-                type="checkbox"
-                checked={planSectionEnabled}
-                onChange={(event) => setPlanSectionEnabled(event.target.checked)}
-              />
-              Plan cut
-            </label>
-            <label>
-              Plan height
-              <input
-                type="number"
-                min="0"
-                step="0.25"
-                value={planSectionHeight}
-                onChange={(event) => setPlanSectionHeight(asNumber(event.target.value, 1))}
-              />
-            </label>
+              <label className="export-shadow-toggle">
+                <input
+                  type="checkbox"
+                  checked={planSectionEnabled}
+                  onChange={(event) => setPlanSectionEnabled(event.target.checked)}
+                />
+                Plan cut
+              </label>
+              <label>
+                Plan height
+                <input
+                  type="number"
+                  min="0"
+                  step="0.25"
+                  value={planSectionHeight}
+                  onChange={(event) => setPlanSectionHeight(asNumber(event.target.value, 0.5))}
+                />
+              </label>
+            </div>
 
             <div className="tool-group">
               <label htmlFor="rotation">Whole Model Rotation</label>
@@ -5303,60 +5311,62 @@ export default function App() {
                     Cast shadow
                   </label>
 
-                  <label className="export-shadow-toggle">
-                    <input
-                      type="checkbox"
-                      checked={sectionXEnabled}
-                      onChange={(event) => setSectionXEnabled(event.target.checked)}
-                    />
-                    X section
-                  </label>
-                  <label>
-                    X section pos
-                    <input
-                      type="number"
-                      step="0.25"
-                      value={sectionXOffset}
-                      onChange={(event) => setSectionXOffset(asNumber(event.target.value, 0))}
-                    />
-                  </label>
+                  <div className="section-control-grid">
+                    <label className="export-shadow-toggle">
+                      <input
+                        type="checkbox"
+                        checked={sectionXEnabled}
+                        onChange={(event) => setSectionXEnabled(event.target.checked)}
+                      />
+                      X section
+                    </label>
+                    <label>
+                      X section pos
+                      <input
+                        type="number"
+                        step="0.25"
+                        value={sectionXOffset}
+                        onChange={(event) => setSectionXOffset(asNumber(event.target.value, 0))}
+                      />
+                    </label>
 
-                  <label className="export-shadow-toggle">
-                    <input
-                      type="checkbox"
-                      checked={sectionYEnabled}
-                      onChange={(event) => setSectionYEnabled(event.target.checked)}
-                    />
-                    Y section
-                  </label>
-                  <label>
-                    Y section pos
-                    <input
-                      type="number"
-                      step="0.25"
-                      value={sectionYOffset}
-                      onChange={(event) => setSectionYOffset(asNumber(event.target.value, 0))}
-                    />
-                  </label>
+                    <label className="export-shadow-toggle">
+                      <input
+                        type="checkbox"
+                        checked={sectionYEnabled}
+                        onChange={(event) => setSectionYEnabled(event.target.checked)}
+                      />
+                      Y section
+                    </label>
+                    <label>
+                      Y section pos
+                      <input
+                        type="number"
+                        step="0.25"
+                        value={sectionYOffset}
+                        onChange={(event) => setSectionYOffset(asNumber(event.target.value, 0))}
+                      />
+                    </label>
 
-                  <label className="export-shadow-toggle">
-                    <input
-                      type="checkbox"
-                      checked={planSectionEnabled}
-                      onChange={(event) => setPlanSectionEnabled(event.target.checked)}
-                    />
-                    Plan cut
-                  </label>
-                  <label>
-                    Plan height
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.25"
-                      value={planSectionHeight}
-                      onChange={(event) => setPlanSectionHeight(asNumber(event.target.value, 1))}
-                    />
-                  </label>
+                    <label className="export-shadow-toggle">
+                      <input
+                        type="checkbox"
+                        checked={planSectionEnabled}
+                        onChange={(event) => setPlanSectionEnabled(event.target.checked)}
+                      />
+                      Plan cut
+                    </label>
+                    <label>
+                      Plan height
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.25"
+                        value={planSectionHeight}
+                        onChange={(event) => setPlanSectionHeight(asNumber(event.target.value, 0.5))}
+                      />
+                    </label>
+                  </div>
 
                   <div className="tool-group">
                     <label htmlFor="mobile-rotation">Whole Model Rotation</label>

@@ -166,6 +166,35 @@ h1 {
   background: #ffffff;
 }
 
+.section-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.section-control-grid label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.section-control-grid .export-shadow-toggle {
+  align-self: center;
+  min-height: 38px;
+}
+
+.section-control-grid input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 8px;
+  border: 1px solid #bec9c5;
+  border-radius: 6px;
+  color: #1f2d31;
+  background: #ffffff;
+}
+
 .hidden-file {
   display: none;
 }
