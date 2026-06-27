@@ -22,8 +22,10 @@ export default async function handler(request, response) {
   const lat = Number(url.searchParams.get("lat"));
   const lon = Number(url.searchParams.get("lon"));
   const zoom = Number(url.searchParams.get("zoom"));
+  const width = Math.max(240, Math.min(640, Math.round(Number(url.searchParams.get("width")) || 640)));
+  const height = Math.max(180, Math.min(640, Math.round(Number(url.searchParams.get("height")) || 360)));
   const params = new URLSearchParams({
-    size: "640x640",
+    size: `${width}x${height}`,
     scale: "2",
     maptype: "roadmap",
     key: apiKey
@@ -34,7 +36,6 @@ export default async function handler(request, response) {
   if (Number.isFinite(zoom)) {
     params.set("zoom", String(Math.max(1, Math.min(21, Math.round(zoom)))));
   }
-  params.append("markers", `color:red|size:small|${points.map(([lat, lon]) => `${lat},${lon}`).join("|")}`);
 
   const googleResponse = await fetch(`https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`);
   if (!googleResponse.ok) {

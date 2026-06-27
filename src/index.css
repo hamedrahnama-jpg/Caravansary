@@ -801,6 +801,12 @@ h1 {
   font-weight: 800;
 }
 
+.map-overview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .map-overview-header button {
   display: grid;
   width: 30px;
@@ -810,12 +816,20 @@ h1 {
   border-radius: 6px;
   color: #26353a;
   background: #ffffff;
+  font-weight: 900;
 }
 
 .map-overview-body {
   position: relative;
   min-height: 0;
   background: #dce6df;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.map-overview-body:active {
+  cursor: grabbing;
 }
 
 .map-overview-fallback,
@@ -827,7 +841,9 @@ h1 {
 }
 
 .map-overview-fallback {
-  object-fit: cover;
+  object-fit: fill;
+  pointer-events: none;
+  user-select: none;
 }
 
 .map-overview-pins {
