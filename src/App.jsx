@@ -5723,6 +5723,7 @@ export default function App() {
             >
               <div className="map-guide-header">
                 <span>Map Guide</span>
+                <small>{locationModels.length} items</small>
                 <button
                   type="button"
                   onClick={() => {
@@ -5801,16 +5802,19 @@ export default function App() {
                 {locationModels.length === 0 ? (
                   <span>No tagged models</span>
                 ) : (
-                  locationModels.map((model) => (
+                  locationModels.map((model, index) => (
                     <div key={model.id} className="map-model-item">
-                      <label>
-                        Name
-                        <input
-                          type="text"
-                          value={model.name}
-                          onChange={(event) => updateLocationModelDraft(model.id, "name", event.target.value)}
-                        />
-                      </label>
+                      <div className="map-model-title-row">
+                        <span className="map-model-number">{index + 1}</span>
+                        <label>
+                          Name
+                          <input
+                            type="text"
+                            value={model.name}
+                            onChange={(event) => updateLocationModelDraft(model.id, "name", event.target.value)}
+                          />
+                        </label>
+                      </div>
                       <div className="map-model-coordinate-row">
                         <label>
                           Lat
