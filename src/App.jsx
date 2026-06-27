@@ -5724,16 +5724,32 @@ export default function App() {
               <div className="map-guide-header">
                 <span>Map Guide</span>
                 <small>{locationModels.length} items</small>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMapGuideOpen(false);
-                    setMobileMapPanelOpen(false);
-                  }}
-                  aria-label="Close map guide"
-                >
-                  <X size={15} aria-hidden="true" />
-                </button>
+                <div className="map-guide-header-actions">
+                  <button
+                    type="button"
+                    className={`map-header-mobile-action${mapStageVisible ? " active" : ""}`}
+                    onClick={() => setMapStageVisible((current) => !current)}
+                  >
+                    Stage
+                  </button>
+                  <button
+                    type="button"
+                    className={`map-header-mobile-action${mapOverviewOpen ? " active" : ""}`}
+                    onClick={() => setMapOverviewOpen(true)}
+                  >
+                    View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapGuideOpen(false);
+                      setMobileMapPanelOpen(false);
+                    }}
+                    aria-label="Close map guide"
+                  >
+                    <X size={15} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
               <div className="map-tag-card">
                 <iframe
@@ -5786,14 +5802,14 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    className={mapStageVisible ? "active" : ""}
+                    className={`map-secondary-action${mapStageVisible ? " active" : ""}`}
                     onClick={() => setMapStageVisible((current) => !current)}
                   >
                     Stage
                   </button>
                   <button
                     type="button"
-                    className={mapOverviewOpen ? "active" : ""}
+                    className={`map-secondary-action${mapOverviewOpen ? " active" : ""}`}
                     onClick={() => setMapOverviewOpen(true)}
                   >
                     View
