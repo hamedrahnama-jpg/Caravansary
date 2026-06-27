@@ -527,15 +527,6 @@ function getMercatorPoint(lat, lon) {
   };
 }
 
-function getLatLonFromMercatorPoint(point) {
-  const lon = (point.x / 256 - 0.5) * 360;
-  const n = Math.PI - (2 * Math.PI * point.y) / 256;
-  return {
-    lat: THREE.MathUtils.radToDeg(Math.atan(Math.sinh(n))),
-    lon
-  };
-}
-
 function getMapOverviewPinStyle(model, bounds, size) {
   const zoomScale = 2 ** Math.round(THREE.MathUtils.clamp(asNumber(bounds.zoom, 5), 1, 21));
   const center = getMercatorPoint(bounds.centerLat, bounds.centerLon);
@@ -1690,7 +1681,6 @@ export default function App() {
   const previewCanvasRef = useRef(null);
   const mapOverviewPreviewCanvasRef = useRef(null);
   const mapOverviewBodyRef = useRef(null);
-  const mapPickerBodyRef = useRef(null);
   const sectionCanvasRef = useRef(null);
   const sceneRef = useRef(null);
   const previewSceneRef = useRef(null);
@@ -1724,7 +1714,6 @@ export default function App() {
   const floorRef = useRef(null);
   const gridRef = useRef(null);
   const stageMapRef = useRef({ mesh: null, material: null, texture: null });
-  const mapPickerDragRef = useRef(null);
   const dragRef = useRef({
     active: false,
     object: null,
@@ -1774,7 +1763,6 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState(null);
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
   const [mapOverviewOpen, setMapOverviewOpen] = useState(false);
-  const [mapPickerOpen, setMapPickerOpen] = useState(false);
   const [mapOverviewSize, setMapOverviewSize] = useState({ width: 640, height: 360 });
   const [hoveredMapModelId, setHoveredMapModelId] = useState(null);
   const [mapStageVisible, setMapStageVisible] = useState(false);
@@ -3323,50 +3311,6 @@ export default function App() {
     } catch {
       setSaveStatus("Open failed");
     }
-  }
-
-  function handleMapPickerPointerDown(event) {
-    if (event.button !== 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    mapPickerDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      width: rect.width,
-      height: rect.height,
-      lat: asNumber(mapLat, 0),
-      lon: asNumber(mapLon, 0),
-      zoom: Math.round(THREE.MathUtils.clamp(asNumber(mapZoom, 18), 1, 21))
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function handleMapPickerPointerMove(event) {
-    const drag = mapPickerDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const coverScale = Math.max(drag.width / 640, drag.height / 640, 1);
-    const zoomScale = 2 ** drag.zoom;
-    const center = getMercatorPoint(drag.lat, drag.lon);
-    const next = getLatLonFromMercatorPoint({
-      x: center.x - (event.clientX - drag.startX) / coverScale / zoomScale,
-      y: center.y - (event.clientY - drag.startY) / coverScale / zoomScale
-    });
-    setMapLat(Number(THREE.MathUtils.clamp(next.lat, -85, 85).toFixed(6)));
-    setMapLon(Number(((((next.lon + 180) % 360) + 360) % 360 - 180).toFixed(6)));
-  }
-
-  function handleMapPickerPointerUp(event) {
-    if (mapPickerDragRef.current?.pointerId === event.pointerId) {
-      mapPickerDragRef.current = null;
-    }
-  }
-
-  function handleMapPickerWheel(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    setMapZoom((current) =>
-      Math.round(THREE.MathUtils.clamp(asNumber(current, 18) + (event.deltaY > 0 ? -1 : 1), 1, 21))
-    );
   }
 
   async function saveCurrentModelToLocation() {
@@ -5879,14 +5823,10 @@ export default function App() {
                 <iframe
                   key={`guide-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
                   title="Google satellite map"
-                  src={getGoogleStaticMapUrl(mapLat, mapLon, mapZoom)}
+                  src={getGoogleSatelliteUrl(mapLat, mapLon, mapZoom)}
                   loading="lazy"
                   referrerPolicy="no-referrer-when-downgrade"
                 />
-                <button type="button" className="map-fullscreen-button" onClick={() => setMapPickerOpen(true)}>
-                  <Maximize2 size={14} aria-hidden="true" />
-                  Full
-                </button>
               </div>
               <div className="map-list-scroll">
                 <div className="map-guide-controls">
@@ -6003,57 +5943,6 @@ export default function App() {
                       </div>
                     ))
                   )}
-                </div>
-              </div>
-            </div>
-          ) : null}
-          {mapPickerOpen ? (
-            <div
-              className="map-picker-modal"
-              onPointerDown={(event) => event.stopPropagation()}
-              onPointerMove={(event) => event.stopPropagation()}
-              onPointerUp={(event) => event.stopPropagation()}
-              onWheel={(event) => event.stopPropagation()}
-            >
-              <div className="map-picker-toolbar">
-                <div>
-                  <strong>Pick Tag Location</strong>
-                  <span>
-                    {Number(asNumber(mapLat, 0)).toFixed(6)}, {Number(asNumber(mapLon, 0)).toFixed(6)} - z
-                    {Math.round(asNumber(mapZoom, 18))}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMapRefreshKey((current) => current + 1);
-                    setMapPickerOpen(false);
-                  }}
-                >
-                  Use this location
-                </button>
-                <button type="button" aria-label="Close fullscreen map" onClick={() => setMapPickerOpen(false)}>
-                  <X size={16} aria-hidden="true" />
-                </button>
-              </div>
-              <div
-                ref={mapPickerBodyRef}
-                className="map-picker-body"
-                onPointerDown={handleMapPickerPointerDown}
-                onPointerMove={handleMapPickerPointerMove}
-                onPointerUp={handleMapPickerPointerUp}
-                onPointerCancel={handleMapPickerPointerUp}
-                onWheel={handleMapPickerWheel}
-              >
-                <img
-                  key={`picker-map-${mapRefreshKey}-${mapLat}-${mapLon}-${mapZoom}`}
-                  className="map-picker-frame"
-                  src={getGoogleSatelliteUrl(mapLat, mapLon, mapZoom)}
-                  alt=""
-                  draggable="false"
-                />
-                <div className="map-picker-crosshair">
-                  <Crosshair size={28} aria-hidden="true" />
                 </div>
               </div>
             </div>
