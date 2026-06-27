@@ -602,7 +602,7 @@ h1 {
   right: 14px;
   z-index: 25;
   display: grid;
-  grid-template-rows: 34px auto minmax(0, 1fr);
+  grid-template-rows: 34px 180px minmax(0, 1fr);
   width: min(360px, calc(100% - 28px));
   max-height: calc(100% - 28px);
   overflow: hidden;
@@ -668,7 +668,6 @@ h1 {
 
 .map-tag-card {
   display: grid;
-  grid-template-rows: 180px auto;
   min-height: 0;
   margin: 8px;
   overflow: hidden;
@@ -691,6 +690,15 @@ h1 {
   padding: 6px;
   border-top: 1px solid #d8dfdc;
   background: #d7dfda;
+}
+
+.map-list-scroll {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 8px;
 }
 
 .map-guide-controls label {
@@ -736,8 +744,7 @@ h1 {
   display: grid;
   gap: 5px;
   min-height: 0;
-  overflow: auto;
-  padding: 0 8px 8px;
+  padding: 0;
 }
 
 .map-model-list > span {
@@ -1312,7 +1319,7 @@ h1 {
     right: 0;
     bottom: 0;
     z-index: 80;
-    grid-template-rows: 40px minmax(0, auto) minmax(0, 1fr);
+    grid-template-rows: 40px minmax(130px, 42dvh) minmax(0, 1fr);
     width: min(94vw, 390px);
     max-height: none;
     border-top: 0;
@@ -1350,9 +1357,13 @@ h1 {
   }
 
   .map-tag-card {
-    grid-template-rows: minmax(120px, 32dvh) auto;
-    max-height: none;
+    min-height: 0;
     margin: 7px;
+  }
+
+  .map-list-scroll {
+    gap: 6px;
+    padding: 0 7px 12px;
   }
 
   .map-guide-controls {
@@ -1361,6 +1372,8 @@ h1 {
     padding: 6px;
     overflow: visible;
     background: #cfd8d2;
+    border: 1px solid #b8c4be;
+    border-radius: 7px;
   }
 
   .map-guide-controls label {
@@ -1384,7 +1397,6 @@ h1 {
 
   .map-model-list {
     gap: 4px;
-    padding: 0 7px 12px;
   }
 
   .map-model-coordinate-row {

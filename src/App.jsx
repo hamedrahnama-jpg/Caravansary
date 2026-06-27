@@ -5759,6 +5759,8 @@ export default function App() {
                   loading="lazy"
                   referrerPolicy="no-referrer-when-downgrade"
                 />
+              </div>
+              <div className="map-list-scroll">
                 <div className="map-guide-controls">
                   <label>
                     Lat
@@ -5815,65 +5817,65 @@ export default function App() {
                     View
                   </button>
                 </div>
-              </div>
-              <div className="map-model-list">
-                {locationModels.length === 0 ? (
-                  <span>No tagged models</span>
-                ) : (
-                  locationModels.map((model, index) => (
-                    <div key={model.id} className="map-model-item">
-                      <div className="map-model-title-row">
-                        <span className="map-model-number">{index + 1}</span>
-                        <label>
-                          Name
-                          <input
-                            type="text"
-                            value={model.name}
-                            onChange={(event) => updateLocationModelDraft(model.id, "name", event.target.value)}
-                          />
-                        </label>
+                <div className="map-model-list">
+                  {locationModels.length === 0 ? (
+                    <span>No tagged models</span>
+                  ) : (
+                    locationModels.map((model, index) => (
+                      <div key={model.id} className="map-model-item">
+                        <div className="map-model-title-row">
+                          <span className="map-model-number">{index + 1}</span>
+                          <label>
+                            Name
+                            <input
+                              type="text"
+                              value={model.name}
+                              onChange={(event) => updateLocationModelDraft(model.id, "name", event.target.value)}
+                            />
+                          </label>
+                        </div>
+                        <div className="map-model-coordinate-row">
+                          <label>
+                            Lat
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={model.lat}
+                              onChange={(event) => updateLocationModelDraft(model.id, "lat", event.target.value)}
+                            />
+                          </label>
+                          <label>
+                            Lon
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={model.lon}
+                              onChange={(event) => updateLocationModelDraft(model.id, "lon", event.target.value)}
+                            />
+                          </label>
+                          <label>
+                            Zoom
+                            <input
+                              type="number"
+                              min="1"
+                              max="21"
+                              step="1"
+                              value={model.zoom ?? 18}
+                              onChange={(event) => updateLocationModelDraft(model.id, "zoom", event.target.value)}
+                            />
+                          </label>
+                        </div>
+                        <div className="map-model-actions">
+                          <button type="button" onClick={() => void openLocationModel(model)}>Open</button>
+                          <button type="button" onClick={() => void saveLocationModelEdits(model)}>Save</button>
+                          <button type="button" className="danger" onClick={() => void deleteLocationModel(model.id)}>
+                            Delete
+                          </button>
+                        </div>
                       </div>
-                      <div className="map-model-coordinate-row">
-                        <label>
-                          Lat
-                          <input
-                            type="number"
-                            step="0.000001"
-                            value={model.lat}
-                            onChange={(event) => updateLocationModelDraft(model.id, "lat", event.target.value)}
-                          />
-                        </label>
-                        <label>
-                          Lon
-                          <input
-                            type="number"
-                            step="0.000001"
-                            value={model.lon}
-                            onChange={(event) => updateLocationModelDraft(model.id, "lon", event.target.value)}
-                          />
-                        </label>
-                        <label>
-                          Zoom
-                          <input
-                            type="number"
-                            min="1"
-                            max="21"
-                            step="1"
-                            value={model.zoom ?? 18}
-                            onChange={(event) => updateLocationModelDraft(model.id, "zoom", event.target.value)}
-                          />
-                        </label>
-                      </div>
-                      <div className="map-model-actions">
-                        <button type="button" onClick={() => void openLocationModel(model)}>Open</button>
-                        <button type="button" onClick={() => void saveLocationModelEdits(model)}>Save</button>
-                        <button type="button" className="danger" onClick={() => void deleteLocationModel(model.id)}>
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           ) : null}
