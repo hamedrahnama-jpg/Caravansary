@@ -1411,7 +1411,6 @@ function applyStyleToAsset(group, module, style) {
 
 function disposeObject(object) {
   object.traverse((child) => {
-    if (!child.isMesh) return;
     child.geometry?.dispose();
     if (Array.isArray(child.material)) {
       child.material.forEach((material) => material.dispose());
@@ -1555,6 +1554,72 @@ function getModuleThumbnail(module) {
           : block;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="56" viewBox="0 0 72 56"><rect width="72" height="56" rx="8" fill="#eef3f0"/><path d="M8 43h56" stroke="#c4cfca" stroke-width="1"/><g transform="translate(4 0)">${base}${shape}</g><text x="36" y="52" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="700" fill="#344348">${label}</text></svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function getModuleThumbnailSignature(module) {
+  return JSON.stringify({
+    id: module.id,
+    name: module.name,
+    color: module.color,
+    url: module.url,
+    scale: module.scale,
+    rotation: module.rotation,
+    customDimensions: module.customDimensions,
+    footprint: module.footprint
+  });
+}
+
+async function renderModuleTopThumbnail(module, style) {
+  const width = 112;
+  const height = 84;
+  const canvas = document.createElement("canvas");
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    alpha: false,
+    preserveDrawingBuffer: true
+  });
+  renderer.setPixelRatio(1.5);
+  renderer.setSize(width, height, false);
+  renderer.setClearColor("#eef3f0", 1);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color("#eef3f0");
+  scene.add(new THREE.AmbientLight("#ffffff", 2.2));
+  const light = new THREE.DirectionalLight("#ffffff", 1.2);
+  light.position.set(3, 7, 4);
+  scene.add(light);
+
+  const mesh = module.url
+    ? await createAssetModuleMesh(module, style)
+    : createPlaceholderModuleMesh(module, style);
+  scene.add(mesh);
+
+  const box = new THREE.Box3().setFromObject(mesh);
+  if (!box.isEmpty()) {
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const viewHeight = Math.max(size.x, size.z, 1) / 0.78;
+    const viewWidth = viewHeight * (width / height);
+    const camera = new THREE.OrthographicCamera(
+      -viewWidth / 2,
+      viewWidth / 2,
+      viewHeight / 2,
+      -viewHeight / 2,
+      0.1,
+      Math.max(100, size.y + viewHeight * 5)
+    );
+    camera.position.set(center.x, box.max.y + viewHeight * 2.6, center.z);
+    camera.up.set(0, 0, -1);
+    camera.lookAt(center.x, center.y, center.z);
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+  }
+
+  const dataUrl = canvas.toDataURL("image/png");
+  disposeObject(mesh);
+  renderer.dispose();
+  return dataUrl;
 }
 
 function createStageLabel(text, color, options = {}) {
@@ -1774,6 +1839,7 @@ export default function App() {
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
   const [locationModelName, setLocationModelName] = useState("New site model");
   const [locationModels, setLocationModels] = useState(loadLocalLocationModels);
+  const [moduleTopThumbnails, setModuleTopThumbnails] = useState({});
   const [dimensionUnit, setDimensionUnit] = useState("stage");
   const [keepDimensionRatio, setKeepDimensionRatio] = useState(true);
   const [measuredDimensions, setMeasuredDimensions] = useState(null);
@@ -1785,6 +1851,13 @@ export default function App() {
   const editing = useMemo(
     () => modules.find((module) => module.id === editingModule) ?? modules[0],
     [editingModule, modules]
+  );
+  const sortedModules = useMemo(
+    () =>
+      [...modules].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+      ),
+    [modules]
   );
   const mapOverviewBounds = useMemo(() => getTaggedMapBounds(locationModels), [locationModels]);
   const hoveredMapModel = useMemo(
@@ -1935,6 +2008,40 @@ export default function App() {
       cancelled = true;
     };
   }, [modules]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const style = STYLES[styleKey];
+
+    async function buildTopThumbnails() {
+      for (const module of modules) {
+        const signature = getModuleThumbnailSignature(module);
+        if (cancelled) return;
+        if (moduleTopThumbnails[module.id]?.signature === signature) continue;
+
+        try {
+          const url = await renderModuleTopThumbnail(module, style);
+          if (cancelled) return;
+          setModuleTopThumbnails((current) => ({
+            ...current,
+            [module.id]: { signature, url }
+          }));
+        } catch {
+          if (cancelled) return;
+          setModuleTopThumbnails((current) => ({
+            ...current,
+            [module.id]: { signature, url: getModuleThumbnail(module) }
+          }));
+        }
+      }
+    }
+
+    buildTopThumbnails();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modules, moduleTopThumbnails, styleKey]);
 
   useEffect(() => {
     const element = mapOverviewBodyRef.current;
@@ -5129,7 +5236,7 @@ export default function App() {
               <span>{modules.length} Modules</span>
             </div>
             <div className="module-grid">
-              {modules.map((module) => (
+              {sortedModules.map((module) => (
                 <button
                   key={module.id}
                   type="button"
@@ -5138,7 +5245,12 @@ export default function App() {
                   onClick={() => addModuleAtCenter(module)}
                   onDragStart={(event) => event.dataTransfer.setData("module-id", module.id)}
                 >
-                  <img className="module-preview" src={getModuleThumbnail(module)} alt="" draggable="false" />
+                  <img
+                    className="module-preview"
+                    src={moduleTopThumbnails[module.id]?.url ?? getModuleThumbnail(module)}
+                    alt=""
+                    draggable="false"
+                  />
                   <span>{module.name}</span>
                 </button>
               ))}
@@ -5184,7 +5296,7 @@ export default function App() {
                   setSelectedModule(event.target.value);
                 }}
               >
-                {modules.map((module) => (
+                {sortedModules.map((module) => (
                   <option key={module.id} value={module.id}>
                     {module.name}
                   </option>
@@ -5332,7 +5444,7 @@ export default function App() {
             <span>{modules.length} Modules</span>
           </div>
           <div className="module-grid">
-            {modules.map((module) => (
+            {sortedModules.map((module) => (
               <button
                 key={`mobile-${module.id}`}
                 type="button"
@@ -5344,7 +5456,12 @@ export default function App() {
                 }}
                 onDragStart={(event) => event.dataTransfer.setData("module-id", module.id)}
               >
-                <img className="module-preview" src={getModuleThumbnail(module)} alt="" draggable="false" />
+                <img
+                  className="module-preview"
+                  src={moduleTopThumbnails[module.id]?.url ?? getModuleThumbnail(module)}
+                  alt=""
+                  draggable="false"
+                />
                 <span>{module.name}</span>
               </button>
             ))}
