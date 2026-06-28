@@ -13,7 +13,6 @@ import {
   Layers,
   MapPinned,
   Menu,
-  Move3D,
   Maximize2,
   Minimize2,
   FileDown,
@@ -1758,7 +1757,7 @@ export default function App() {
   const [rotation, setRotation] = useState(0);
   const [modelScale, setModelScale] = useState(1);
   const [placed, setPlaced] = useState([]);
-  const [selectedPlaced, setSelectedPlaced] = useState(null);
+  const [, setSelectedPlaced] = useState(null);
   const [selectedPlacedIds, setSelectedPlacedIds] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
   const [mapGuideOpen, setMapGuideOpen] = useState(false);
@@ -1782,11 +1781,6 @@ export default function App() {
   const [editingModule, setEditingModule] = useState(DEFAULT_MODULES[0].id);
   const [saveStatus, setSaveStatus] = useState("Loaded");
   const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
-
-  const selected = useMemo(
-    () => modules.find((module) => module.id === selectedModule) ?? modules[0],
-    [modules, selectedModule]
-  );
 
   const editing = useMemo(
     () => modules.find((module) => module.id === editingModule) ?? modules[0],
@@ -4824,14 +4818,6 @@ export default function App() {
   const updateWholeModelScale = (value) => {
     setModelScale(THREE.MathUtils.clamp(asNumber(value, 1), 0.05, 10));
   };
-  const selectedPlacedLabel =
-    selectedPlacedIds.length > 1
-      ? `${selectedPlacedIds.length} selected`
-      : selectedPlaced
-        ? `Selected: ${
-            placedRef.current.find((item) => item.id === selectedPlaced)?.module.name ?? selected.name
-          }`
-        : selected.name;
   const modulePanelClass = `module-panel${mobileModulePanelOpen ? " mobile-open" : ""}`;
   const toolbarClass = `workspace-toolbar${mobileRibbonOpen ? " mobile-open" : ""}`;
   const mapGuideClass = `map-guide${mobileMapPanelOpen ? " mobile-open" : ""}`;
@@ -5366,14 +5352,18 @@ export default function App() {
         </div>
       </aside>
 
-      <section className="workspace">
-        <div className={toolbarClass}>
-          <div className="status-block">
-            <Move3D size={18} aria-hidden="true" />
-            <span>{placed.length} placed</span>
-            <strong>{selectedPlacedLabel}</strong>
-          </div>
-          <button
+        <section className="workspace">
+          <div className={toolbarClass}>
+            <div className="mobile-toolbar-brand">
+              <span className="brand-mark">
+                <Box size={20} aria-hidden="true" />
+              </span>
+              <div>
+                <strong>Caravansary</strong>
+                <span>Modular 3D builder</span>
+              </div>
+            </div>
+            <button
             type="button"
             className="mobile-module-toggle"
             aria-label={mobileModulePanelOpen ? "Close module list" : "Open module list"}
@@ -5401,6 +5391,24 @@ export default function App() {
             {mobileRibbonOpen ? <X size={19} aria-hidden="true" /> : <Menu size={19} aria-hidden="true" />}
           </button>
           <div className="toolbar-actions">
+            <div className="mobile-view-tabs view-tabs" aria-label="Mobile workspace mode">
+              <button
+                type="button"
+                className={activeView === "builder" ? "active" : ""}
+                onClick={() => setActiveView("builder")}
+              >
+                <Layers size={16} aria-hidden="true" />
+                Builder
+              </button>
+              <button
+                type="button"
+                className={activeView === "admin" ? "active" : ""}
+                onClick={() => setActiveView("admin")}
+              >
+                <Settings size={16} aria-hidden="true" />
+                Admin
+              </button>
+            </div>
             <div className="toolbar-group" aria-label="File">
               <span>File</span>
               <button type="button" onClick={() => openDesignInputRef.current?.click()} title="Open model">
@@ -5515,25 +5523,6 @@ export default function App() {
               </button>
             </div>
             <div className="mobile-panel-settings">
-              <div className="view-tabs" aria-label="Mobile workspace mode">
-                <button
-                  type="button"
-                  className={activeView === "builder" ? "active" : ""}
-                  onClick={() => setActiveView("builder")}
-                >
-                  <Layers size={16} aria-hidden="true" />
-                  Builder
-                </button>
-                <button
-                  type="button"
-                  className={activeView === "admin" ? "active" : ""}
-                  onClick={() => setActiveView("admin")}
-                >
-                  <Settings size={16} aria-hidden="true" />
-                  Admin
-                </button>
-              </div>
-
               {activeView === "builder" ? (
                 <>
                   <div className="tool-group">
