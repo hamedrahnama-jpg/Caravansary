@@ -1618,6 +1618,7 @@ async function renderModuleTopThumbnail(module, style) {
 
   const dataUrl = canvas.toDataURL("image/png");
   disposeObject(mesh);
+  renderer.forceContextLoss();
   renderer.dispose();
   return dataUrl;
 }
@@ -1778,6 +1779,7 @@ export default function App() {
   const floorRef = useRef(null);
   const gridRef = useRef(null);
   const stageMapRef = useRef({ mesh: null, material: null, texture: null });
+  const moduleTopThumbnailsRef = useRef({});
   const dragRef = useRef({
     active: false,
     object: null,
@@ -2014,26 +2016,27 @@ export default function App() {
     const style = STYLES[styleKey];
 
     async function buildTopThumbnails() {
+      const nextThumbnails = {};
       for (const module of modules) {
         const signature = getModuleThumbnailSignature(module);
         if (cancelled) return;
-        if (moduleTopThumbnails[module.id]?.signature === signature) continue;
+        if (moduleTopThumbnailsRef.current[module.id]?.signature === signature) continue;
 
         try {
           const url = await renderModuleTopThumbnail(module, style);
           if (cancelled) return;
-          setModuleTopThumbnails((current) => ({
-            ...current,
-            [module.id]: { signature, url }
-          }));
+          nextThumbnails[module.id] = { signature, url };
         } catch {
           if (cancelled) return;
-          setModuleTopThumbnails((current) => ({
-            ...current,
-            [module.id]: { signature, url: getModuleThumbnail(module) }
-          }));
+          nextThumbnails[module.id] = { signature, url: getModuleThumbnail(module) };
         }
       }
+      if (cancelled || Object.keys(nextThumbnails).length === 0) return;
+      moduleTopThumbnailsRef.current = {
+        ...moduleTopThumbnailsRef.current,
+        ...nextThumbnails
+      };
+      setModuleTopThumbnails(moduleTopThumbnailsRef.current);
     }
 
     buildTopThumbnails();
@@ -2041,7 +2044,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [modules, moduleTopThumbnails, styleKey]);
+  }, [modules, styleKey]);
 
   useEffect(() => {
     const element = mapOverviewBodyRef.current;
