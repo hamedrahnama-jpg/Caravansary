@@ -445,6 +445,10 @@ function createModelLocationId() {
   return window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function getDisplayNameFromFileName(fileName) {
+  return fileName.replace(/\.[^.]+$/, "").trim();
+}
+
 function getGoogleSatelliteUrl(lat, lon, zoom) {
   const safeLat = asNumber(lat, 0);
   const safeLon = asNumber(lon, 0);
@@ -1570,6 +1574,10 @@ function getModuleThumbnailSignature(module) {
 }
 
 async function renderModuleTopThumbnail(module, style) {
+  if (module.url) {
+    return getModuleThumbnail(module);
+  }
+
   const width = 112;
   const height = 84;
   const canvas = document.createElement("canvas");
@@ -1841,6 +1849,7 @@ export default function App() {
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
   const [locationModelName, setLocationModelName] = useState("New site model");
   const [locationModels, setLocationModels] = useState(loadLocalLocationModels);
+  const [currentDesignName, setCurrentDesignName] = useState("");
   const [moduleTopThumbnails, setModuleTopThumbnails] = useState({});
   const [dimensionUnit, setDimensionUnit] = useState("stage");
   const [keepDimensionRatio, setKeepDimensionRatio] = useState(true);
@@ -3204,6 +3213,7 @@ export default function App() {
     });
     placedRef.current = [];
     setPlaced([]);
+    setCurrentDesignName("");
     requestSceneRender();
     requestSectionViewportRender();
   }
@@ -3352,7 +3362,13 @@ export default function App() {
     const nextItems = [];
     const designModules = await Promise.all((design.modules ?? []).map(getRuntimeModuleWithAsset));
     const designModuleById = new Map(designModules.map((module) => [module.id, module]));
+    const designModuleByName = new Map(
+      designModules.filter((module) => module.name).map((module) => [module.name.toLowerCase(), module])
+    );
     const moduleById = new Map(modules.map((module) => [module.id, module]));
+    const moduleByName = new Map(
+      modules.filter((module) => module.name).map((module) => [module.name.toLowerCase(), module])
+    );
     if (clearCurrent && designModules.length > 0) {
       setModules(designModules);
       setSelectedModule((current) =>
@@ -3366,8 +3382,10 @@ export default function App() {
     for (const savedItem of design.placed) {
       const savedRuntimeModule = savedItem.module ? await getRuntimeModuleWithAsset(savedItem.module) : null;
       const baseModule =
-        designModuleById.get(savedItem.moduleId) ??
         moduleById.get(savedItem.moduleId) ??
+        (savedRuntimeModule?.name ? moduleByName.get(savedRuntimeModule.name.toLowerCase()) : null) ??
+        designModuleById.get(savedItem.moduleId) ??
+        (savedRuntimeModule?.name ? designModuleByName.get(savedRuntimeModule.name.toLowerCase()) : null) ??
         savedRuntimeModule;
       if (!baseModule) continue;
 
@@ -3408,9 +3426,12 @@ export default function App() {
       const design = await readJsonFile(file);
       await addDesignToStage(design, { clearCurrent: mode === "open" });
       if (mode === "open") {
+        setCurrentDesignName(getDisplayNameFromFileName(file.name));
         setRotation(THREE.MathUtils.clamp(asNumber(design.transform?.rotation, 0), -180, 180));
         setModelScale(THREE.MathUtils.clamp(asNumber(design.transform?.scale, 1), 0.05, 10));
         frameWholeModelInView(0.9);
+      } else {
+        setCurrentDesignName("");
       }
     } catch {
       setSaveStatus("Open failed");
@@ -3455,6 +3476,7 @@ export default function App() {
       setMapRefreshKey((current) => current + 1);
       setLocationModelName(model.name);
       await restoreDesignSnapshot(model.design, { frameModel: true });
+      setCurrentDesignName(model.name);
       setSaveStatus(`Loaded ${model.name}`);
     } catch {
       setSaveStatus("Location load failed");
@@ -5483,6 +5505,11 @@ export default function App() {
                 <span>Modular 3D builder</span>
               </div>
             </div>
+            {currentDesignName ? (
+              <div className="current-design-name" title={currentDesignName}>
+                {currentDesignName}
+              </div>
+            ) : null}
             <button
             type="button"
             className="mobile-module-toggle"

@@ -550,6 +550,22 @@ h1 {
   line-height: 1.2;
 }
 
+.current-design-name {
+  max-width: min(30vw, 360px);
+  margin-right: auto;
+  overflow: hidden;
+  padding: 6px 10px;
+  border: 1px solid #d5ddd9;
+  border-radius: 999px;
+  color: #26353a;
+  background: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .toolbar-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1240,6 +1256,12 @@ h1 {
   .mobile-toolbar-brand strong {
     max-width: 46vw;
     font-size: 0.98rem;
+  }
+
+  .current-design-name {
+    max-width: 30vw;
+    padding: 5px 8px;
+    font-size: 0.72rem;
   }
 
   .mobile-ribbon-toggle {
